@@ -162,7 +162,7 @@ export default function TarjetaEvaluacion({ modelo }: Props) {
             <dt>Conjunto</dt>
             <dd>
               {modelo.conjunto}
-              {modelo.conjunto_version && ` v${modelo.conjunto_version}`}
+              {modelo.conjunto_version && ` ${modelo.conjunto_version}`}
             </dd>
           </div>
         )}
