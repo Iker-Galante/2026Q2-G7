@@ -81,7 +81,7 @@ TP-AWS/
 │   ├── main.py · config.py · aplicacion.py · puertos.py
 │   └── infraestructura/ cola_postgres.py · conjunto_s3.py · modelo_s3.py
 ├── frontend/                    # React + Vite + TypeScript
-│   └── src/ api/ · hooks/ · components/ · pages/Laboratorio.tsx
+│   └── src/ api/ · hooks/ · enrutador.tsx · components/ · pages/ · estilos/
 ├── migraciones/ 001_inicial.sql
 ├── infra/                       # user data, .env.example, refrescar.sh, apagar.sh, prender.sh, placeholders/
 ├── tools/                       # descargar_modelo · verificar_modelo · preparar_conjunto · subir_conjunto · migrar
@@ -368,7 +368,11 @@ fijos, más un test contra `modelo.onnx` real marcado `@slow` que solo corre si 
 
 ## 8. Frontend
 
-React + Vite + TypeScript, CSS propio.
+React + Vite + TypeScript, CSS propio, sin librerías.
+
+Tres vistas, una por público: la **portada** cuenta qué es Ateneo y abre las otras dos;
+**publicación** es la vista de quien sube modelos; **consulta** la de quien atiende pacientes. El
+único estado que comparten es el que ya vive en la API.
 
 ```
 src/
@@ -376,9 +380,19 @@ src/
 ├── hooks/
 │   ├── useModelos.ts           # publicados + disponibles; refresco
 │   ├── usePublicacion.ts       # publicar + polling del modelo cada 3 s hasta ok/error
-│   └── useInferencia.ts        # crear estudio → POST a S3 → encolar → polling del trabajo cada 1,5 s
-├── components/ SelectorModelo · TarjetaEvaluacion · PanelPublicar · CargadorImagen · EstadoTrabajo · ResultadoInferencia · EstadoApi
-└── pages/Laboratorio.tsx       # dos columnas; único estado compartido: modelo elegido
+│   ├── useInferencia.ts        # crear estudio → POST a S3 → encolar → polling del trabajo cada 1,5 s
+│   ├── useSalud.ts             # GET /api/health cada 10 s, para la barra y el pie
+│   └── useTema.ts              # claro/oscuro; sin elección manda prefers-color-scheme
+├── enrutador.tsx               # useRuta() + <Enlace>: History API, tres rutas, ~60 líneas
+├── components/
+│   ├── Marca · Navegacion · PieSitio · DiagramaFlujo        # identidad y marco del sitio
+│   ├── ListaDisponibles · CatalogoModelos · TarjetaEvaluacion
+│   └── SelectorModelo · ResumenMedida · CargadorImagen · EstadoTrabajo · ResultadoInferencia · EstadoApi
+├── pages/
+│   ├── Inicio.tsx              # "/"          portada: qué es, el recorrido, las dos puertas
+│   ├── Publicar.tsx            # "/publicar"  bucket → alta → evaluación en vivo → catálogo
+│   └── Consulta.tsx            # "/consulta"  modelo medido → estudio → predicción
+└── estilos/ base.css · sitio.css · paneles.css              # tokens, sitio, paneles
 ```
 
 - Componentes sin `fetch`: reciben datos y callbacks. Los hooks usan `api/`. Cambiar la API es
@@ -388,8 +402,15 @@ src/
 - Subida a S3 con el `presigned POST` tal cual (`FormData` con los campos + el archivo).
 - Rutas relativas (`/api/...`): en producción resuelven al ALB; en desarrollo, Vite hace proxy a
   `localhost:8080`. El código no distingue entornos, igual que el `index.html` de la guía.
-- Sin router: una página. `react-router` entra sin tocar hooks; el backend ya devuelve
-  `index.html` para rutas del cliente.
+- **Ruteo propio, no react-router.** `enrutador.tsx` es `useSyncExternalStore` sobre
+  `history.pushState` más un `<Enlace>` que respeta ctrl/cmd/click del medio. Son tres rutas fijas
+  y una dependencia menos que instalar en el despliegue; `sitio.py` ya devuelve `index.html` para
+  cualquier ruta fuera de `/api`, así que recargar `/consulta` funciona. Si algún día hacen falta
+  rutas con parámetros, entra react-router tocando solo este archivo.
+- **Identidad visual**: la misma de los documentos del proyecto (verde clínico `#0E6B66`, Archivo
+  para títulos, Source Sans 3 para el cuerpo, IBM Plex Mono para los datos), en tokens de CSS con
+  tema claro y oscuro. Las fuentes vienen de Google Fonts con `display=swap` y una pila del sistema
+  detrás: si el navegador no las alcanza, el sitio sigue legible.
 
 ## 9. Configuración por servicio
 

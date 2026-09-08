@@ -126,7 +126,7 @@ Navegador              Backend (app)          S3 modelos        Postgres        
 
 1. La pantalla lista los modelos que hay en el bucket (prefijos con `modelo.json`) y marca cuáles
    ya están publicados.
-2. El usuario elige uno y aprieta **Publicar modelo**. El backend lee `modelo.json` de S3, valida
+2. El usuario elige uno y aprieta **Publicar**. El backend lee `modelo.json` de S3, valida
    el contrato (§7) e inserta o actualiza la fila con `estado_evaluacion = pendiente`, borrando
    métricas anteriores. Responde `202`.
 3. El evaluador en `eval-1` toma la fila, baja el modelo, lee manifiesto, verdad y casos de la
@@ -390,26 +390,38 @@ de los casos falla, la evaluación termina en `error`.
 | Rutas del cliente | `404` fuera de `/api` → `index.html` (guía §10). |
 | Sin autenticación | Punto de extensión `Depends(usuario_actual)`, hoy anónimo. |
 
-## 12. Pantalla
+## 12. Pantallas
 
-Una sola página, **Laboratorio**, en dos columnas, servida en `http://<alb>/`.
+Tres vistas servidas en `http://<alb>/`, con ruteo del lado del cliente (`/`, `/publicar`,
+`/consulta`; un `404` fuera de `/api` devuelve `index.html`). Una por público: la portada explica,
+publicación es de quien sube modelos, consulta es de quien atiende.
 
-**Columna izquierda · Modelo**
-- Selector de modelo publicado (nombre, versión, tipo de estudio, etiquetas).
-- Tarjeta de evaluación: `accuracy` grande, precisión y sensibilidad macro, casos, conjunto y
-  versión, fecha, hash corto. Estados: "Sin evaluar", "Evaluando…" (spinner y polling), "Error:
-  …".
-- Panel **Publicar modelo**: select con los modelos disponibles en el bucket (los ya publicados
-  aparecen marcados) y el botón. Al apretarlo, el modelo aparece en el selector con "Evaluando…".
+**Portada (`/`)** — qué es Ateneo, el recorrido de un modelo (publicar → medir aislado → catálogo →
+consultar), las dos puertas y lo que el pre-MVP todavía no hace. Muestra en vivo cuántos modelos
+hay publicados, cuántos evaluados, la mejor accuracy y cuántos esperan en el bucket.
 
-**Columna derecha · Estudio**
-- Zona de arrastre / selector de archivo con vista previa local.
-- Botón **Inferir** (habilitado con modelo elegido e imagen cargada).
-- Estado del trabajo: "Subiendo" → "En cola" → "Procesando" → resultado. Resultado: etiqueta
-  predicha destacada, barras de probabilidad por clase, duración, worker e intentos.
-- Errores legibles: "El worker no respondió tras 3 intentos", "Tipo de estudio distinto".
+**Publicación (`/publicar`)**
+- **En el bucket**: una fila por prefijo con `modelo.json` —nombre, versión, tipo de estudio, si ya
+  está en el catálogo— y su botón **Publicar** / **Volver a publicar**.
+- **La evaluación**: tarjeta del modelo elegido con la `accuracy` grande, métricas secundarias,
+  matriz de confusión, casos, conjunto y versión, hash del manifiesto, evaluador y fecha. Estados:
+  «Sin evaluar», «Evaluando…» (spinner y polling cada 3 s), «La evaluación falló: …». Al lado, qué
+  valida el alta y qué hace volver a publicar.
+- **El catálogo**: tabla de los publicados (modelo, tipo de estudio, evaluación, accuracy, casos,
+  conjunto, fecha) con la mejor accuracy de cada tipo marcada. Elegir una fila la muestra arriba.
 
-**Pie**: `/api/health` → instancia que atendió, para ver al ALB alternar.
+**Consulta (`/consulta`)**
+- **El modelo**: tarjetas de los modelos publicados con la accuracy a la vista; debajo, contra qué
+  se midió (sensibilidad, especificidad, casos, conjunto) y la evaluación completa desplegable.
+- **El estudio**: zona de arrastre / selector de archivo con vista previa local y botón
+  **Consultar**, habilitado con modelo elegido e imagen cargada.
+- **El resultado**: «Subiendo» → «En cola» → «Procesando» → etiqueta predicha destacada, barras de
+  probabilidad por clase, duración, worker e intentos. Cierra con el aviso de que es orientativo y
+  no reemplaza el criterio clínico.
+- Errores legibles: «El worker no respondió tras 3 intentos», «Tipo de estudio distinto».
+
+**Barra y pie**: `/api/health` con la instancia que atendió (para ver al ALB alternar) y
+alternador de tema claro / oscuro.
 
 ## 13. Criterios de aceptación
 
@@ -419,13 +431,13 @@ especificidad 0,99, AUC 0,995, 0 casos ilegibles); inferencias de 59 a 292 ms; y
 apagado, el trabajo hace 3 intentos y termina en `error` sin colgar nada.
 
 
-1. Con el ONNX y su `modelo.json` en S3, **Publicar modelo** lo deja en `pendiente` y, con
+1. Con el ONNX y su `modelo.json` en S3, **Publicar** lo deja en `pendiente` y, con
    `eval-1` encendida, pasa a `ok` con `accuracy` en menos de 3 min para 200 casos.
 2. La fila del modelo dice contra qué se midió: `conjunto`, `conjunto_version`, `manifiesto.hash`
    y `evaluador_id` poblados.
 3. Desde CloudShell, `aws s3api get-object` sobre un caso del conjunto da `AccessDenied` mientras
    la evaluación anterior sí terminó (prueba 6 de la demo).
-4. **Inferir** con una imagen de la carpeta `Testing` devuelve `202` de inmediato y el trabajo
+4. **Consultar** con una imagen de la carpeta `Testing` devuelve `202` de inmediato y el trabajo
    pasa a `ok` en menos de 5 s, con `worker_id` poblado.
 5. Repetir seis veces muestra al menos dos `worker_id` distintos con `asg-inf` en 2 instancias
    (prueba 4).

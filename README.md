@@ -2,9 +2,10 @@
 
 Marketplace de modelos de IA clínica · Cloud Computing 82.08 · ITBA.
 
-Pre-MVP: una pantalla para **publicar un modelo** (simulado: el ONNX ya está en S3, el botón lo da
-de alta y `eval-1` lo evalúa contra el conjunto reservado) e **inferir una imagen** (cola en
-Postgres, despachador en el backend, worker de inferencia detrás del ALB interno).
+Pre-MVP: una portada que cuenta qué ofrece Ateneo y dos secciones detrás, una por público.
+**Publicar un modelo** (simulado: el ONNX ya está en S3, el botón lo da de alta y `eval-1` lo
+evalúa contra el conjunto reservado) y **consultar un estudio** (cola en Postgres, despachador en
+el backend, worker de inferencia detrás del ALB interno).
 
 - [specs.md](specs.md) · qué hace: flujos, API, contrato del modelo, esquema, criterios de aceptación.
 - [architecture.md](architecture.md) · cómo está construido: capas, puertos y adaptadores, SOLID, despliegue.
@@ -17,7 +18,7 @@ ateneo_ml/    preprocesamiento + motor ONNX + métricas, compartido por worker y
 backend/      FastAPI: API, sitio estático, despachador de trabajos (capa app)
 worker/       FastAPI: /inferir (capa inferencia, sin estado, sin base)
 evaluador/    proceso que evalúa modelos pendientes (eval-1, subred aislada)
-frontend/     React + Vite + TypeScript (una página: Laboratorio)
+frontend/     React + Vite + TypeScript (portada + publicación + consulta)
 migraciones/  SQL
 tools/        bajar y verificar el modelo, preparar y subir el conjunto, migrar
 infra/        user data, .env de ejemplo, desplegar.sh, refrescar.sh
@@ -44,8 +45,9 @@ docker compose run --rm herramientas python tools/preparar_conjunto.py \n  --hf 
 docker compose run --rm herramientas python tools/subir_conjunto.py /salida/torax-rx/v1
 ```
 
-Después, en la pantalla: **Publicar modelo** (el evaluador tarda 2-4 min en CPU con 200 casos)
-e **Inferir** con cualquiera de las radiografías que quedaron en `tmp/torax-rx/v1/casos/`.
+Después, en `/publicar`: **Publicar** (el evaluador tarda 2-4 min en CPU con 200 casos). Y en
+`/consulta`: **Consultar** con cualquiera de las radiografías que quedaron en
+`tmp/torax-rx/v1/casos/`.
 
 Útiles:
 

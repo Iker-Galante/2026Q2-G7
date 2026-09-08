@@ -126,7 +126,8 @@ Es el orden de la §15 de la guía («un cambio por vez para saber cuál rompió
 4. **El worker.** `bash infra/desplegar.sh worker` · `bash infra/refrescar.sh asg-inf`. Verificar
    `healthy` en `tg-inf` como en §8.4.
 5. **El frontend.** `bash infra/desplegar.sh frontend` · `bash infra/refrescar.sh asg-app`.
-   Abrir `http://<alb>/`: tiene que aparecer la pantalla «Laboratorio» con «API: ok».
+   Abrir `http://<alb>/`: tiene que aparecer la portada de Ateneo con «API ok» en la barra, y
+   `/publicar` y `/consulta` tienen que cargar también al recargar el navegador.
 6. **El modelo a S3** (la «subida a mano», D2 de specs). Desde CloudShell, parado en `~/ateneo`,
    sin gastar disco:
    ```bash
@@ -148,10 +149,11 @@ Es el orden de la §15 de la guía («un cambio por vez para saber cuál rompió
    (rellena los buckets y el endpoint de RDS solo); terminar la instancia vieja y
    `aws ec2 run-instances --launch-template LaunchTemplateName=lt-eval,Version='$Latest'`.
    Leer el boletín: `aws ec2 get-console-output --instance-id i-… --latest --output text | grep RESULTADO`.
-9. **Apretar «Publicar modelo»** en la pantalla. En 2-4 minutos la tarjeta muestra la accuracy.
+9. **Apretar «Publicar»** en `/publicar`. En 2-4 minutos la tarjeta muestra la accuracy.
    Si queda en `pendiente` más de un minuto, `eval-1` no está tomando la cola: mirá su log de
    arranque (§9.3) y que `evaluador.env` tenga la `DATABASE_URL` correcta.
-10. **Inferir** con cualquier radiografía de tórax, por ejemplo una de `tmp/torax-rx/v1/casos/`.
+10. En `/consulta`, **Consultar** con cualquier radiografía de tórax, por ejemplo una de
+    `tmp/torax-rx/v1/casos/`.
     El trabajo pasa por `pendiente → en_curso → ok` y la pantalla muestra el `worker_id`.
 
 ## 4. Qué se vuelve a desplegar cuando cambia qué
