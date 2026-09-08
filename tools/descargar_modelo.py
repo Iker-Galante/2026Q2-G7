@@ -10,7 +10,8 @@ Uso:
   python tools/descargar_modelo.py --contrato            # imprime el modelo.json y sale
 
 En CloudShell, sin tocar el disco:
-  P=s3://ateneo-modelos-g7/modelos/torax-rx-neumonia/1.0.0
+  . infra/entorno.sh                                   # tus nombres de bucket
+  P=s3://$BUCKET_MODELOS/modelos/torax-rx-neumonia/1.0.0
   curl -sL <URL_ONNX> | aws s3 cp - $P/modelo.onnx
   python3 tools/descargar_modelo.py --contrato | aws s3 cp - $P/modelo.json
 """

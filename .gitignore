@@ -18,3 +18,6 @@ frontend/dist/
 tmp/
 datos/
 *.onnx
+
+# configuracion local de buckets (se copia de infra/entorno.example.sh)
+infra/entorno.sh

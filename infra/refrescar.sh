@@ -6,6 +6,7 @@ GRUPO="${1:?uso: refrescar.sh <nombre-del-asg>}"
 
 IDS=$(aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names "$GRUPO" \
       --query 'AutoScalingGroups[0].Instances[].InstanceId' --output text)
+[ "$IDS" = "None" ] && { echo "No existe el grupo $GRUPO. Revisá el nombre."; exit 1; }
 [ -z "$IDS" ] && { echo "El grupo $GRUPO no tiene instancias."; exit 0; }
 
 echo "Terminando: $IDS"
