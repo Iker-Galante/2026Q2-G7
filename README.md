@@ -34,6 +34,12 @@ contenedor. El backend sirve el frontend compilado en `/`, igual que en la capa 
 docker compose up -d --build            # db, minio, migraciones, backend, worker, evaluador
 ```
 
+**El sitio se compila adentro de la imagen del backend** (`docker/Dockerfile.backend` tiene una
+etapa de node), así que después de tocar `frontend/` o `backend/` hay que reconstruir:
+`docker compose up -d --build backend`. Si la interfaz es nueva pero el backend quedó viejo, subir
+un modelo falla con «Method Not Allowed»: la ruta `POST /api/modelos/subidas` todavía no existe de
+ese lado y el pedido cae en `GET /api/modelos/{id}`.
+
 Abrí <http://localhost:8080>. Todavía no hay modelos ni conjunto reservado: los dos comandos de
 acá abajo bajan el ONNX y el conjunto; el modelo se sube después desde la propia pantalla.
 
@@ -69,6 +75,10 @@ pip install -r requirements-dev.txt
 pytest                                               # tests de ateneo_ml, evaluador, backend
 cd frontend && npm install && npm run dev            # http://localhost:5173, proxy /api → :8080
 ```
+
+El 5173 es **solo para desarrollar** con recarga en caliente, y necesita el Docker levantado: hace
+proxy de `/api` al 8080. La aplicación se abre en <http://localhost:8080>, donde el backend sirve
+el sitio y la API desde el mismo origen, igual que el ALB en AWS.
 
 ## Desplegar en AWS Academy
 
