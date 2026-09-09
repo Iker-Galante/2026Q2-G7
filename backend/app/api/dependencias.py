@@ -16,7 +16,9 @@ from fastapi import Request
 
 from ..aplicacion.casos_uso.estudios import CrearEstudio
 from ..aplicacion.casos_uso.inferencias import ConsultarTrabajo, DespacharTrabajo, EncolarInferencia
-from ..aplicacion.casos_uso.modelos import ConsultarModelo, ListarModelos, ListarModelosDisponibles, PublicarModelo
+from ..aplicacion.casos_uso.modelos import (
+    ConsultarModelo, ListarModelos, ListarModelosDisponibles, PrepararSubidaModelo, PublicarModelo,
+)
 from ..aplicacion.despachador import Despachador
 from ..config import Settings
 from ..infraestructura.http.cliente_inferencia import ClienteInferenciaHttp
@@ -33,6 +35,7 @@ from ..infraestructura.s3.catalogo_modelos import CatalogoModelosS3
 class Contenedor:
     settings: Settings
     listar_disponibles: ListarModelosDisponibles
+    preparar_subida: PrepararSubidaModelo
     publicar_modelo: PublicarModelo
     listar_modelos: ListarModelos
     consultar_modelo: ConsultarModelo
@@ -66,7 +69,7 @@ def armar(settings: Settings) -> Contenedor:
     estudios = RepositorioEstudiosPostgres(pool)
     trabajos = RepositorioTrabajosPostgres(pool)
     almacen = AlmacenEstudiosS3(s3, settings.bucket_estudios, settings.s3_url_publica)
-    catalogo = CatalogoModelosS3(s3, settings.bucket_modelos, settings.prefijo_modelos)
+    catalogo = CatalogoModelosS3(s3, settings.bucket_modelos, settings.prefijo_modelos, settings.s3_url_publica)
     cliente = ClienteInferenciaHttp(settings.inferencia_url, settings.timeout_inferencia_s)
 
     despachar = DespacharTrabajo(estudios, modelos, trabajos, cliente, reloj,
@@ -77,6 +80,7 @@ def armar(settings: Settings) -> Contenedor:
     return Contenedor(
         settings=settings,
         listar_disponibles=ListarModelosDisponibles(catalogo, modelos),
+        preparar_subida=PrepararSubidaModelo(catalogo, settings.max_bytes_modelo, settings.prefijo_modelos),
         publicar_modelo=PublicarModelo(catalogo, modelos, reloj, settings.prefijo_modelos),
         listar_modelos=ListarModelos(modelos),
         consultar_modelo=ConsultarModelo(modelos),
@@ -97,6 +101,10 @@ def contenedor(request: Request) -> Contenedor:
 
 def dep_listar_disponibles(request: Request) -> ListarModelosDisponibles:
     return contenedor(request).listar_disponibles
+
+
+def dep_preparar_subida(request: Request) -> PrepararSubidaModelo:
+    return contenedor(request).preparar_subida
 
 
 def dep_publicar_modelo(request: Request) -> PublicarModelo:

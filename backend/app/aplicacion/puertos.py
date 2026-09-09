@@ -75,8 +75,14 @@ class AlmacenEstudios(Protocol):
 
 
 class CatalogoModelosEnBucket(Protocol):
+    """El bucket de modelos. Los casos de uso hablan de prefijos; qué archivos
+    hay adentro de cada uno lo sabe el adaptador."""
     def listar(self) -> list[RefModeloEnBucket]: ...                # prefijos con modelo.json
-    def leer_contrato(self, prefix: str) -> dict[str, Any]: ...    # NoEncontrado
+    def leer_contrato(self, prefix: str) -> dict[str, Any]: ...     # NoEncontrado
+    def existe(self, prefix: str) -> bool: ...                      # el prefijo ya está ocupado
+    def firmar_subida(self, prefix: str, max_bytes: int) -> SubidaFirmada: ...   # el ONNX
+    def describir_modelo(self, prefix: str) -> ObjetoAlmacenado: ...             # NoEncontrado
+    def escribir_contrato(self, prefix: str, contrato: dict[str, Any]) -> None: ...
 
 
 # ---- servicios ----------------------------------------------------------------------

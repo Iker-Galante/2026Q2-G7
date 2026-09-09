@@ -128,8 +128,21 @@ Es el orden de la §15 de la guía («un cambio por vez para saber cuál rompió
 5. **El frontend.** `bash infra/desplegar.sh frontend` · `bash infra/refrescar.sh asg-app`.
    Abrir `http://<alb>/`: tiene que aparecer la portada de Ateneo con «API ok» en la barra, y
    `/publicar` y `/consulta` tienen que cargar también al recargar el navegador.
-6. **El modelo a S3** (la «subida a mano», D2 de specs). Desde CloudShell, parado en `~/ateneo`,
-   sin gastar disco:
+
+   **CORS de los dos buckets que reciben subidas del navegador** (estudios y modelos):
+
+   ```bash
+   bash infra/cors.sh http://<dns-del-alb>
+   ```
+
+   Sin esto, subir un estudio o un modelo falla con un error de red que no dice por qué. Se corre
+   una vez, y de nuevo solo si cambia el DNS del balanceador. El rol de las instancias app además
+   tiene que poder `s3:PutObject` en el bucket de modelos: la API escribe ahí el `modelo.json`
+   validado (`LabRole` ya lo permite).
+6. **El modelo.** El camino del producto es subirlo desde `/publicar` con su `modelo.json`: para
+   eso alcanza con tener los dos archivos en tu máquina
+   (`python3 tools/descargar_modelo.py --solo-descargar`). Si preferís sembrar el bucket desde
+   CloudShell, sin gastar disco y sin navegador:
    ```bash
    . infra/entorno.sh
    P=s3://$BUCKET_MODELOS/modelos/torax-rx-neumonia/1.0.0
@@ -149,7 +162,8 @@ Es el orden de la §15 de la guía («un cambio por vez para saber cuál rompió
    (rellena los buckets y el endpoint de RDS solo); terminar la instancia vieja y
    `aws ec2 run-instances --launch-template LaunchTemplateName=lt-eval,Version='$Latest'`.
    Leer el boletín: `aws ec2 get-console-output --instance-id i-… --latest --output text | grep RESULTADO`.
-9. **Apretar «Publicar»** en `/publicar`. En 2-4 minutos la tarjeta muestra la accuracy.
+9. **Subir y publicar** en `/publicar` (o «Publicar» sobre el modelo que ya sembraste en el paso
+   6). En 2-4 minutos la tarjeta muestra la accuracy.
    Si queda en `pendiente` más de un minuto, `eval-1` no está tomando la cola: mirá su log de
    arranque (§9.3) y que `evaluador.env` tenga la `DATABASE_URL` correcta.
 10. En `/consulta`, **Consultar** con cualquier radiografía de tórax, por ejemplo una de

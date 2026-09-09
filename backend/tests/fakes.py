@@ -97,8 +97,11 @@ class AlmacenMemoria:
 
 
 class CatalogoMemoria:
-    def __init__(self, contratos: dict[str, dict[str, Any]] | None = None):
+    def __init__(self, contratos: dict[str, dict[str, Any]] | None = None,
+                 onnx: set[str] | None = None):
         self.contratos = contratos or {}     # prefix → modelo.json
+        self.onnx = onnx or set()            # prefijos que ya tienen su modelo.onnx
+        self.firmadas: list[str] = []        # prefijos para los que se firmó una subida
 
     def listar(self):
         refs = []
@@ -111,6 +114,22 @@ class CatalogoMemoria:
         if prefix not in self.contratos:
             raise NoEncontrado(prefix)
         return self.contratos[prefix]
+
+    def existe(self, prefix) -> bool:
+        return prefix in self.contratos or prefix in self.onnx
+
+    def firmar_subida(self, prefix, max_bytes) -> SubidaFirmada:
+        self.firmadas.append(prefix)
+        return SubidaFirmada(url="http://s3.local/modelos",
+                             campos={"key": f"{prefix}modelo.onnx", "Content-Type": "application/octet-stream"})
+
+    def describir_modelo(self, prefix) -> ObjetoAlmacenado:
+        if prefix not in self.onnx:
+            raise NoEncontrado(f"{prefix}modelo.onnx")
+        return ObjetoAlmacenado(tamano_bytes=16_000_000, etag="etag")
+
+    def escribir_contrato(self, prefix, contrato) -> None:
+        self.contratos[prefix] = contrato
 
 
 class ClienteInferenciaFalso:

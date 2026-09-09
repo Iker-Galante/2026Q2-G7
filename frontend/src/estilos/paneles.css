@@ -508,6 +508,81 @@
   font-size: 0.85rem;
 }
 
+/* Subir un modelo */
+
+.subir-modelo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  min-width: 0;
+}
+
+.subir-modelo .zona-soltar {
+  min-height: 130px;
+}
+
+.campo-cabecera {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.editor {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.55;
+  tab-size: 2;
+  padding: 0.8rem 0.9rem;
+  border: 1px solid var(--borde-fuerte);
+  border-radius: var(--radio-chico);
+  background: var(--superficie-2);
+  color: var(--tinta);
+  resize: vertical;
+  width: 100%;
+}
+
+.editor:disabled {
+  opacity: 0.6;
+}
+
+.contrato-mal {
+  color: var(--error);
+}
+
+.destino {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+  font-size: 0.92rem;
+}
+
+.destino code {
+  font-size: 12.5px;
+}
+
+.progreso {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.progreso-pista {
+  height: 0.5rem;
+  background: var(--superficie-2);
+  border: 1px solid var(--borde);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.progreso-relleno {
+  height: 100%;
+  background: var(--acento);
+  border-radius: 999px;
+  transition: width 0.2s ease;
+}
+
 /* Pasos del trabajo */
 
 .pasos {

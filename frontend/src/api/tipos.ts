@@ -1,6 +1,12 @@
 // Tipos que devuelve la API de Ateneo. Espejo de specs.md; si cambia el
 // backend, cambia acá y el compilador marca el resto.
 
+/** Presigned POST de S3: URL destino + campos que van antes del archivo. */
+export interface SubidaPresignada {
+  url: string;
+  campos: Record<string, string>;
+}
+
 export type EstadoEvaluacion = "pendiente" | "en_curso" | "ok" | "error";
 
 export interface MatrizConfusion {
@@ -49,9 +55,26 @@ export interface ModeloDisponible {
   modelo_id: string | null;
 }
 
+/** El modelo.json tal cual: lo valida la API, así que acá viaja como objeto libre. */
+export type ContratoModelo = Record<string, unknown>;
+
 export interface SolicitudPublicar {
   nombre: string;
   version: string;
+  /** Presente cuando el modelo se acaba de subir: la API lo escribe en el bucket. */
+  contrato?: ContratoModelo;
+}
+
+export interface SolicitudSubidaModelo {
+  nombre: string;
+  version: string;
+  tamano_bytes: number;
+}
+
+/** Destino en el bucket y el POST prefirmado para mandarle el ONNX. */
+export interface SubidaModeloCreada {
+  prefix: string;
+  subida: SubidaPresignada;
 }
 
 export interface SolicitudEstudio {
@@ -59,12 +82,6 @@ export interface SolicitudEstudio {
   nombre_archivo: string;
   content_type: string;
   tamano_bytes: number;
-}
-
-/** Presigned POST de S3: URL destino + campos que van antes del archivo. */
-export interface SubidaPresignada {
-  url: string;
-  campos: Record<string, string>;
 }
 
 export interface EstudioCreado {

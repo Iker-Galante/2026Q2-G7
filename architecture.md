@@ -54,8 +54,8 @@ TP-AWS/
 │   │   ├── aplicacion/          # casos de uso; dependen solo de puertos
 │   │   │   ├── puertos.py       # Protocols: repositorios, almacenes, cliente de inferencia, reloj
 │   │   │   ├── casos_uso/
-│   │   │   │   ├── listar_modelos_disponibles.py · publicar_modelo.py · consultar_modelo.py
-│   │   │   │   ├── crear_estudio.py · encolar_inferencia.py · consultar_trabajo.py
+│   │   │   │   ├── listar_modelos_disponibles.py · preparar_subida_modelo.py · publicar_modelo.py
+│   │   │   │   ├── consultar_modelo.py · crear_estudio.py · encolar_inferencia.py · consultar_trabajo.py
 │   │   │   │   └── despachar_trabajo.py          # lo usa el despachador, no la API
 │   │   │   └── despachador.py   # bucle: tomar pendiente → DespacharTrabajo → dormir
 │   │   ├── infraestructura/     # adaptadores; uno por tecnología
@@ -169,9 +169,13 @@ class AlmacenEstudios(Protocol):
     def firmar_subida(self, key: str, content_type: str, max_bytes: int) -> SubidaFirmada: ...
     def describir(self, key: str) -> ObjetoAlmacenado: ...    # NoEncontrado si no se subió
 
-class CatalogoModelosS3(Protocol):
+class CatalogoModelosEnBucket(Protocol):
     def listar(self) -> list[RefModelo]: ...                  # prefijos con modelo.json
     def leer_contrato(self, prefix: str) -> dict: ...         # NoEncontrado
+    def existe(self, prefix: str) -> bool: ...                # una versión no se pisa
+    def firmar_subida(self, prefix: str, max_bytes: int) -> SubidaFirmada: ...   # el ONNX
+    def describir_modelo(self, prefix: str) -> ObjetoAlmacenado: ...             # NoEncontrado
+    def escribir_contrato(self, prefix: str, contrato: dict) -> None: ...
 
 class ClienteInferencia(Protocol):
     def inferir(self, p: PeticionInferencia) -> ResultadoInferencia: ...  # ServicioNoDisponible
@@ -180,15 +184,26 @@ class Reloj(Protocol):
     def ahora(self) -> datetime: ...
 ```
 
-### 4.2 Los tres casos de uso que importan
+### 4.2 Los casos de uso que importan
 
 ```python
+class PrepararSubidaModelo:
+    def ejecutar(self, nombre: str, version: str, tamano_bytes: int) -> SubidaModelo:
+        if self.catalogo.existe(prefix(nombre, version)):                   # Conflicto → 409
+            raise Conflicto("una versión publicada no se pisa")             # el ONNX no pasa por acá:
+        return SubidaModelo(prefix, self.catalogo.firmar_subida(prefix, self.max_bytes))   # va directo a S3
+
 class PublicarModelo:
-    def ejecutar(self, nombre: str, version: str) -> Modelo:
-        contrato = ContratoModelo.desde_json(self.catalogo.leer_contrato(prefix(nombre, version)))  # EntradaInvalida → 422
+    def ejecutar(self, nombre: str, version: str, contrato_crudo: dict | None = None) -> Modelo:
+        crudo = contrato_crudo if contrato_crudo is not None else self.catalogo.leer_contrato(prefix)
+        contrato = ContratoModelo.desde_json(crudo)                         # EntradaInvalida → 422
         existente = self.modelos.buscar(nombre, version)
-        modelo = existente.republicar(self.reloj.ahora()) if existente else Modelo.publicar(contrato, prefix, self.reloj.ahora())
-        # republicar(): Conflicto si está pendiente/en_curso; si no, vuelve a pendiente y borra métricas
+        modelo = existente.republicar(contrato, ahora) if existente else Modelo.publicar(contrato, prefix, ahora)
+        # republicar(): Conflicto si está pendiente/en_curso; si no, vuelve a pendiente y borra métricas.
+        # Va antes de tocar S3: es lo único que puede rechazar el pedido.
+        if contrato_crudo is not None:                                      # recién subido desde la web
+            self.catalogo.describir_modelo(prefix)                          # NoEncontrado → 404: ¿llegó el ONNX?
+            self.catalogo.escribir_contrato(prefix, contrato_crudo)         # el modelo.json nunca queda solo
         self.modelos.guardar(modelo)
         return modelo
 
@@ -275,8 +290,13 @@ class Despachador:
   (lo que se monta en `/` atrapa todo lo demás), y registra un manejador de `404` que fuera de
   `/api` devuelve `index.html`. Si `WEB_DIR` no existe (local sin build), no monta nada.
 - `GET /health` sin dependencias ni base; `GET /api/health` agrega `socket.gethostname()`.
-- Sin CORS en la API: sitio y API comparten origen. El CORS que sí existe es el del bucket de
-  estudios, para el `POST` prefirmado (guía §04 y §10).
+- Sin CORS en la API: sitio y API comparten origen. El CORS que sí existe es el de los dos buckets
+  a los que el navegador sube directo —estudios y modelos—, para el `POST` prefirmado (guía §04 y
+  §10). `infra/cors.sh <origen>` lo aplica a los dos.
+- **Las dos subidas son la misma pieza.** La imagen del estudio y el ONNX del modelo salen del
+  navegador hacia S3 con un `presigned POST` firmado por la API, que ata el content type y el
+  tamaño máximo; el archivo nunca atraviesa la capa de aplicación. `infraestructura/s3/comun.py`
+  tiene la firma y el `head_object` que comparten los dos adaptadores.
 - Punto de extensión para autenticación: `Depends(usuario_actual)`, hoy `Usuario.anonimo()`.
 
 ## 5. Worker
@@ -377,21 +397,23 @@ Tres vistas, una por público: la **portada** cuenta qué es Ateneo y abre las o
 ```
 src/
 ├── api/ cliente.ts · tipos.ts · modelos.ts · estudios.ts · inferencias.ts · trabajos.ts
+│   └── s3.ts                   # subir un archivo con un presigned POST, con progreso (XHR)
 ├── hooks/
 │   ├── useModelos.ts           # publicados + disponibles; refresco
-│   ├── usePublicacion.ts       # publicar + polling del modelo cada 3 s hasta ok/error
+│   ├── usePublicacion.ts       # subir el ONNX → publicar + polling del modelo cada 3 s
 │   ├── useInferencia.ts        # crear estudio → POST a S3 → encolar → polling del trabajo cada 1,5 s
 │   ├── useSalud.ts             # GET /api/health cada 10 s, para la barra y el pie
 │   └── useTema.ts              # claro/oscuro; sin elección manda prefers-color-scheme
 ├── enrutador.tsx               # useRuta() + <Enlace>: History API, tres rutas, ~60 líneas
 ├── components/
 │   ├── Marca · Navegacion · PieSitio · DiagramaFlujo        # identidad y marco del sitio
-│   ├── ListaDisponibles · CatalogoModelos · TarjetaEvaluacion
+│   ├── SubirModelo · ListaDisponibles · CatalogoModelos · TarjetaEvaluacion
 │   └── SelectorModelo · ResumenMedida · CargadorImagen · EstadoTrabajo · ResultadoInferencia · EstadoApi
 ├── pages/
 │   ├── Inicio.tsx              # "/"          portada: qué es, el recorrido, las dos puertas
 │   ├── Publicar.tsx            # "/publicar"  bucket → alta → evaluación en vivo → catálogo
 │   └── Consulta.tsx            # "/consulta"  modelo medido → estudio → predicción
+├── utilidades/ formato.ts · contrato.ts                     # lectura del modelo.json en el navegador
 └── estilos/ base.css · sitio.css · paneles.css              # tokens, sitio, paneles
 ```
 
@@ -399,7 +421,9 @@ src/
   tocar `api/`.
 - Polling con `setInterval` dentro del hook, cancelado al terminar o al desmontar. Cuando exista
   algo mejor (SSE), cambia el hook, no los componentes.
-- Subida a S3 con el `presigned POST` tal cual (`FormData` con los campos + el archivo).
+- Subida a S3 con el `presigned POST` tal cual (`FormData` con los campos + el archivo), en
+  `api/s3.ts` y con `XMLHttpRequest`: es el único que informa el progreso, y un ONNX pesa decenas
+  de MB. La usan las dos subidas, la del estudio y la del modelo.
 - Rutas relativas (`/api/...`): en producción resuelven al ALB; en desarrollo, Vite hace proxy a
   `localhost:8080`. El código no distingue entornos, igual que el `index.html` de la guía.
 - **Ruteo propio, no react-router.** `enrutador.tsx` es `useSyncExternalStore` sobre
@@ -429,7 +453,8 @@ src/
 ```
 docker compose up -d                     # postgres:16 :5432 · minio :9000 (consola :9001) · crea los 4 buckets
 python tools/migrar.py                   # aplica migraciones/ contra DATABASE_URL
-python tools/descargar_modelo.py         # baja el ONNX, escribe modelo.json, sube a MinIO (o a AWS)
+python tools/descargar_modelo.py --solo-descargar   # deja modelo.onnx y modelo.json en ./tmp/modelo
+                                                   # (para subirlos desde /publicar; sin la opción van a MinIO)
 python tools/preparar_conjunto.py --hf hf-vision/chest-xray-pneumonia --por-clase 100 --salida ./tmp/torax-rx/v1
 python tools/subir_conjunto.py ./tmp/torax-rx/v1
 (cd backend  && uvicorn app.main:app --port 8080 --reload)
@@ -474,7 +499,6 @@ modelo a S3 → conjunto a S3 → lanzar `eval-1` → apretar **Publicar**.
 |-----------|------------|---------------|
 | Cola SQS | `ColaTrabajos` y `ClienteInferencia` pasan a SQS; el worker consume en vez de escuchar | Casos de uso, dominio, `ateneo_ml`, tabla `trabajo` |
 | El worker escribe el resultado (como sugiere la guía) | Un adaptador de `RepositorioTrabajos` en el worker con `insert … on conflict`; `DespacharTrabajo` deja de guardar | Todo lo demás |
-| Subida del ONNX desde la web | `POST /api/modelos` con URL prefirmada + `PublicarModelo` al confirmar | Evaluador, contrato, `ateneo_ml` |
 | Historial de evaluaciones | Tabla `evaluacion` (modelo, conjunto, versión, métricas); la fila del modelo apunta a la vigente | API pública, UI |
 | Juntas de varios modelos | `EncolarInferencia` crea N trabajos; un caso de uso `Consensuar` agrega | Worker, evaluador |
 | DICOM | Un `DecodificadorImagen` más | Preprocesamiento, motor, métricas |

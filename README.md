@@ -3,9 +3,9 @@
 Marketplace de modelos de IA clínica · Cloud Computing 82.08 · ITBA.
 
 Pre-MVP: una portada que cuenta qué ofrece Ateneo y dos secciones detrás, una por público.
-**Publicar un modelo** (simulado: el ONNX ya está en S3, el botón lo da de alta y `eval-1` lo
-evalúa contra el conjunto reservado) y **consultar un estudio** (cola en Postgres, despachador en
-el backend, worker de inferencia detrás del ALB interno).
+**Publicar un modelo** (el ONNX va del navegador directo al bucket con una URL prefirmada, la API
+valida su contrato y `eval-1` lo mide contra el conjunto reservado) y **consultar un estudio**
+(cola en Postgres, despachador en el backend, worker de inferencia detrás del ALB interno).
 
 - [specs.md](specs.md) · qué hace: flujos, API, contrato del modelo, esquema, criterios de aceptación.
 - [architecture.md](architecture.md) · cómo está construido: capas, puertos y adaptadores, SOLID, despliegue.
@@ -34,18 +34,20 @@ contenedor. El backend sirve el frontend compilado en `/`, igual que en la capa 
 docker compose up -d --build            # db, minio, migraciones, backend, worker, evaluador
 ```
 
-Abrí <http://localhost:8080>. Todavía no hay modelos: hay que "subir uno a mano".
+Abrí <http://localhost:8080>. Todavía no hay modelos ni conjunto reservado: los dos comandos de
+acá abajo bajan el ONNX y el conjunto; el modelo se sube después desde la propia pantalla.
 
 ```bash
-# 1. el modelo ONNX (16 MB) → queda en ./tmp/modelo y en el bucket ateneo-modelos de MinIO
-docker compose run --rm herramientas python tools/descargar_modelo.py --carpeta /salida/modelo
+# 1. el modelo ONNX (16 MB) y su modelo.json → quedan en ./tmp/modelo, para subirlos desde la web
+docker compose run --rm herramientas python tools/descargar_modelo.py --carpeta /salida/modelo --solo-descargar
 
 # 2. el conjunto reservado (200 casos), bajado de Hugging Face: no hace falta cuenta de Kaggle
 docker compose run --rm herramientas python tools/preparar_conjunto.py \n  --hf hf-vision/chest-xray-pneumonia --split test --por-clase 100 --salida /salida/torax-rx/v1
 docker compose run --rm herramientas python tools/subir_conjunto.py /salida/torax-rx/v1
 ```
 
-Después, en `/publicar`: **Publicar** (el evaluador tarda 2-4 min en CPU con 200 casos). Y en
+Después, en `/publicar`: arrastrá `tmp/modelo/modelo.onnx` y `tmp/modelo/modelo.json` a la zona de
+subida y apretá **Subir y publicar** (el evaluador tarda 2-4 min en CPU con 200 casos). Y en
 `/consulta`: **Consultar** con cualquiera de las radiografías que quedaron en
 `tmp/torax-rx/v1/casos/`.
 

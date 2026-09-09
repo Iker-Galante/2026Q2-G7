@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Baja el modelo ONNX elegido, escribe su `modelo.json` y lo sube a S3.
+"""Baja el modelo ONNX elegido, escribe su `modelo.json` y, si se lo pide, lo sube a S3.
 
-Es la "subida a mano" del pre-MVP: lo que en el producto real haría un publicador
-desde la web. Después, el botón «Publicar modelo» de la pantalla hace el resto.
+Con `--solo-descargar` deja los dos archivos en el disco: son los que el publicador
+sube desde `/publicar`, que es el camino del producto. Subirlos desde acá es el
+atajo para sembrar el bucket sin navegador; después queda apretar «Publicar».
 
 Uso:
+  python tools/descargar_modelo.py --solo-descargar      # los dos archivos en ./tmp/modelo
   python tools/descargar_modelo.py                       # baja + sube a $BUCKET_MODELOS
-  python tools/descargar_modelo.py --carpeta ./tmp/modelo --solo-descargar
   python tools/descargar_modelo.py --contrato            # imprime el modelo.json y sale
 
 En CloudShell, sin tocar el disco:
@@ -80,7 +81,7 @@ def subir(carpeta: Path, bucket: str) -> None:
     for archivo in ("modelo.json", "modelo.onnx"):
         print(f"  subiendo s3://{bucket}/{prefix}{archivo}")
         s3.upload_file(str(carpeta / archivo), bucket, f"{prefix}{archivo}")
-    print("listo · ahora apretá «Publicar modelo» en la pantalla")
+    print("listo · el modelo ya está en el bucket: apretá «Publicar» en /publicar")
 
 
 def main() -> int:

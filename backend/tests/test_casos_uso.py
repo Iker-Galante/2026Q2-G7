@@ -6,7 +6,9 @@ import pytest
 
 from app.aplicacion.casos_uso.estudios import CrearEstudio
 from app.aplicacion.casos_uso.inferencias import DespacharTrabajo, EncolarInferencia
-from app.aplicacion.casos_uso.modelos import ListarModelosDisponibles, PublicarModelo
+from app.aplicacion.casos_uso.modelos import (
+    ListarModelosDisponibles, PrepararSubidaModelo, PublicarModelo,
+)
 from app.dominio.errores import Conflicto, EntradaInvalida, FalloDefinitivo, NoEncontrado
 
 from .fakes import (
@@ -34,6 +36,16 @@ def mundo():
 
         def publicar(self):
             return PublicarModelo(self.catalogo, self.modelos, self.reloj, "modelos/").ejecutar("torax", "1.0.0")
+
+        def preparar_subida(self, nombre="torax-nuevo", version="2.0.0", tamano=16_000_000,
+                            max_bytes=512_000_000):
+            return PrepararSubidaModelo(self.catalogo, max_bytes, "modelos/").ejecutar(nombre, version, tamano)
+
+        def publicar_subido(self, contrato, nombre=None, version=None):
+            """El camino de la interfaz: el ONNX ya está en el bucket y el contrato viaja en el pedido."""
+            return PublicarModelo(self.catalogo, self.modelos, self.reloj, "modelos/").ejecutar(
+                nombre or contrato["nombre"], version or contrato["version"], contrato,
+            )
 
         def crear_estudio(self, tipo="torax-rx", subido=True):
             c = CrearEstudio(self.estudios, self.almacen, self.reloj, 20_000_000, "estudios/").ejecutar(tipo, "image/png", 1234)
@@ -90,6 +102,62 @@ def test_disponibles_marca_publicados(mundo):
     m = mundo.publicar()
     despues = ListarModelosDisponibles(mundo.catalogo, mundo.modelos).ejecutar()
     assert despues[0].publicado is True and despues[0].modelo_id == m.id
+
+
+
+# ---- subir el modelo desde la interfaz ----------------------------------------------
+
+NUEVO = "modelos/torax-nuevo/2.0.0/"
+
+
+def contrato_nuevo():
+    c = copy.deepcopy(CONTRATO)
+    c["nombre"], c["version"] = "torax-nuevo", "2.0.0"
+    return c
+
+
+def test_preparar_subida_firma_el_prefijo_pedido(mundo):
+    s = mundo.preparar_subida()
+    assert s.prefix == NUEVO and mundo.catalogo.firmadas == [NUEVO]
+    assert s.subida.campos["key"] == f"{NUEVO}modelo.onnx"
+
+
+def test_preparar_subida_no_pisa_una_version_que_ya_existe(mundo):
+    with pytest.raises(Conflicto):
+        mundo.preparar_subida("torax", "1.0.0")
+
+
+def test_preparar_subida_rechaza_un_archivo_fuera_de_rango(mundo):
+    with pytest.raises(EntradaInvalida):
+        mundo.preparar_subida(tamano=2, max_bytes=1)
+
+
+def test_publicar_subido_escribe_el_contrato_al_lado_del_onnx(mundo):
+    mundo.catalogo.onnx.add(NUEVO)
+    m = mundo.publicar_subido(contrato_nuevo())
+    assert m.estado_evaluacion == "pendiente" and m.s3_prefix == NUEVO
+    assert mundo.catalogo.contratos[NUEVO]["nombre"] == "torax-nuevo"
+
+
+def test_publicar_subido_sin_el_onnx_no_escribe_el_contrato(mundo):
+    with pytest.raises(NoEncontrado):
+        mundo.publicar_subido(contrato_nuevo())
+    assert NUEVO not in mundo.catalogo.contratos
+
+
+def test_publicar_subido_con_contrato_invalido_no_escribe_nada(mundo):
+    mundo.catalogo.onnx.add(NUEVO)
+    malo = contrato_nuevo()
+    malo["salida"]["etiquetas"] = ["UNA_SOLA"]
+    with pytest.raises(EntradaInvalida):
+        mundo.publicar_subido(malo)
+    assert NUEVO not in mundo.catalogo.contratos
+
+
+def test_publicar_subido_con_un_contrato_de_otro_modelo(mundo):
+    mundo.catalogo.onnx.add(NUEVO)
+    with pytest.raises(EntradaInvalida):
+        mundo.publicar_subido(contrato_nuevo(), version="9.9.9")
 
 
 # ---- estudios e inferencias ---------------------------------------------------------

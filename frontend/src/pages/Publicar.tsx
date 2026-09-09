@@ -1,20 +1,25 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { Modelo } from "../api/tipos";
+import type { ContratoModelo, Modelo } from "../api/tipos";
 import CatalogoModelos from "../components/CatalogoModelos";
 import ListaDisponibles, { clave } from "../components/ListaDisponibles";
+import SubirModelo from "../components/SubirModelo";
 import TarjetaEvaluacion from "../components/TarjetaEvaluacion";
 import { Enlace } from "../enrutador";
 import { useModelos } from "../hooks/useModelos";
 import { usePublicacion } from "../hooks/usePublicacion";
 
+/** De dónde salió la publicación en curso, para mostrar el error donde se apretó. */
+type Origen = "subida" | "bucket";
+
 /**
- * La vista de quien publica: dar de alta un modelo del bucket, mirar cómo lo
- * mide la instancia aislada y comparar el resultado con el resto del catálogo.
+ * La vista de quien publica: subir el modelo al bucket, mirar cómo lo mide la
+ * instancia aislada y comparar el resultado con el resto del catálogo.
  */
 export default function Publicar() {
   const modelos = useModelos();
   const [idSeleccionado, setIdSeleccionado] = useState<string | null>(null);
   const [claveEnCurso, setClaveEnCurso] = useState<string | null>(null);
+  const [origen, setOrigen] = useState<Origen>("subida");
 
   const { actualizarModelo, refrescar } = modelos;
 
@@ -56,7 +61,20 @@ export default function Publicar() {
     if (!publicacion.publicando) setClaveEnCurso(null);
   }, [publicacion.publicando]);
 
-  const publicar = (nombre: string, version: string) => {
+  const ocupado = useCallback(
+    (nombre: string, version: string) =>
+      modelos.disponibles.some((m) => m.nombre === nombre && m.version === version),
+    [modelos.disponibles],
+  );
+
+  const subir = (archivo: File, contrato: ContratoModelo) => {
+    setOrigen("subida");
+    publicacion.limpiarError();
+    void publicacion.subirYPublicar(archivo, contrato);
+  };
+
+  const republicar = (nombre: string, version: string) => {
+    setOrigen("bucket");
     setClaveEnCurso(clave({ nombre, version }));
     publicacion.limpiarError();
     void publicacion.publicar(nombre, version);
@@ -68,10 +86,11 @@ export default function Publicar() {
         <p className="eyebrow">Para quien publica</p>
         <h1>Publicar un modelo</h1>
         <p className="lede">
-          Un modelo es un prefijo del bucket con dos archivos: <code>modelo.onnx</code> y{" "}
-          <code>modelo.json</code>. Al darlo de alta, la API valida el contrato y lo deja pendiente;
-          la instancia aislada lo toma en los próximos segundos y lo mide contra el conjunto
-          reservado de su tipo de estudio.
+          Subí el <code>.onnx</code> y su contrato. El archivo va del navegador directo al bucket
+          con una URL prefirmada, sin pasar por la API; después la API valida el contrato, lo
+          escribe como <code>modelo.json</code> al lado y deja el modelo pendiente. La instancia
+          aislada lo toma en los próximos segundos y lo mide contra el conjunto reservado de su
+          tipo de estudio.
         </p>
       </header>
 
@@ -87,6 +106,49 @@ export default function Publicar() {
       <section className="seccion">
         <div className="sechead">
           <span className="secnum">01</span>
+          <h2>Subir un modelo</h2>
+        </div>
+
+        <div className="dos-columnas">
+          <SubirModelo
+            publicando={publicacion.publicando}
+            etapa={publicacion.etapa}
+            progreso={publicacion.progreso}
+            error={origen === "subida" ? publicacion.error : null}
+            ocupado={ocupado}
+            onSubir={subir}
+            onLimpiarError={publicacion.limpiarError}
+          />
+
+          <aside className="nota">
+            <h3>Qué pasa cuando apretás subir</h3>
+            <ul className="lista-plana">
+              <li>
+                La API reserva <code>modelos/&lt;nombre&gt;/&lt;version&gt;/</code> y firma la
+                subida. Si esa versión ya existe, responde <code>409</code>: no se pisa.
+              </li>
+              <li>
+                El ONNX viaja del navegador a S3 con esa firma, que ata el tamaño máximo y el
+                content type.
+              </li>
+              <li>
+                El alta valida el contrato —campos obligatorios, <code>forma</code> de cuatro
+                dimensiones con batch 1 coherente con el <code>layout</code> y el espacio de color,
+                etiquetas sin repetir, <code>positiva</code> entre ellas—, confirma que el archivo
+                llegó y recién ahí escribe el <code>modelo.json</code>.
+              </li>
+              <li>
+                Que los tensores existan en el grafo lo comprueba el evaluador al cargar el ONNX:
+                la API no tiene ONNX Runtime.
+              </li>
+            </ul>
+          </aside>
+        </div>
+      </section>
+
+      <section className="seccion">
+        <div className="sechead">
+          <span className="secnum">02</span>
           <h2>En el bucket</h2>
         </div>
 
@@ -95,59 +157,41 @@ export default function Publicar() {
           cargando={modelos.cargando}
           publicando={publicacion.publicando}
           claveEnCurso={claveEnCurso}
-          onPublicar={publicar}
+          onPublicar={republicar}
         />
 
-        {publicacion.error && (
+        {origen === "bucket" && publicacion.error && (
           <div className="caja-error" role="alert">
             {publicacion.error}
           </div>
         )}
-      </section>
 
-      <section className="seccion">
-        <div className="sechead">
-          <span className="secnum">02</span>
-          <h2>La evaluación</h2>
-        </div>
-
-        <div className="dos-columnas">
-          {seleccionado ? (
-            <TarjetaEvaluacion modelo={seleccionado} />
-          ) : (
-            <p className="vacio">
-              Publicá un modelo y su evaluación aparece acá, de «pendiente» a las métricas, sin
-              recargar la página.
-            </p>
-          )}
-
-          <aside className="nota">
-            <h3>Qué valida el alta</h3>
-            <ul className="lista-plana">
-              <li>Campos obligatorios y enums del contrato.</li>
-              <li>
-                <code>forma</code> de cuatro dimensiones con batch 1, coherente con el{" "}
-                <code>layout</code> y con el espacio de color.
-              </li>
-              <li>
-                Etiquetas sin repetir y <code>positiva</code> entre ellas.
-              </li>
-              <li>
-                Que los tensores existan en el grafo lo comprueba el evaluador al cargar el ONNX: la
-                API no tiene ONNX Runtime.
-              </li>
-            </ul>
-            <p>
-              Volver a publicar borra las métricas y vuelve a medir. Si el modelo está pendiente o en
-              curso, la API responde <code>409</code> y no pasa nada.
-            </p>
-          </aside>
-        </div>
+        <p className="caption">
+          Todo lo que ya está en el bucket, sin importar si llegó por acá o lo subió el operador a
+          mano. Volver a publicar borra las métricas y lo vuelve a medir; si está pendiente o en
+          curso, la API responde <code>409</code> y no pasa nada.
+        </p>
       </section>
 
       <section className="seccion">
         <div className="sechead">
           <span className="secnum">03</span>
+          <h2>La evaluación</h2>
+        </div>
+
+        {seleccionado ? (
+          <TarjetaEvaluacion modelo={seleccionado} />
+        ) : (
+          <p className="vacio">
+            Publicá un modelo y su evaluación aparece acá, de «pendiente» a las métricas, sin
+            recargar la página.
+          </p>
+        )}
+      </section>
+
+      <section className="seccion">
+        <div className="sechead">
+          <span className="secnum">04</span>
           <h2>El catálogo</h2>
         </div>
 
