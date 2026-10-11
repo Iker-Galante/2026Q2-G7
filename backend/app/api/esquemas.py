@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Annotated, Any
 from uuid import UUID
 
 from pydantic import BaseModel, Field
 
 from ..aplicacion.casos_uso.estudios import EstudioCreado
-from ..aplicacion.casos_uso.modelos import ModeloDisponible
+from ..aplicacion.casos_uso.modelos import ModeloDisponible, SubidaModelo
 from ..dominio.modelo import Modelo
 from ..dominio.trabajo import Trabajo
 
@@ -17,6 +17,12 @@ from ..dominio.trabajo import Trabajo
 class ErrorRespuesta(BaseModel):
     error: str
     detalle: str
+
+
+class SubidaRespuesta(BaseModel):
+    """POST prefirmado de S3: los campos van antes del archivo, en ese orden."""
+    url: str
+    campos: dict[str, str]
 
 
 class ModeloDisponibleRespuesta(BaseModel):
@@ -31,9 +37,35 @@ class ModeloDisponibleRespuesta(BaseModel):
         return ModeloDisponibleRespuesta(**m.__dict__)
 
 
+# Los dos segmentos del prefijo en S3: sin barras ni espacios.
+NombreModelo = Annotated[str, Field(min_length=1, max_length=120, pattern=r"^[A-Za-z0-9._-]+$")]
+VersionModelo = Annotated[str, Field(min_length=1, max_length=40, pattern=r"^[A-Za-z0-9._-]+$")]
+
+
+class PrepararSubidaModeloPeticion(BaseModel):
+    nombre: NombreModelo
+    version: VersionModelo
+    tamano_bytes: int = Field(gt=0)
+
+
 class PublicarModeloPeticion(BaseModel):
-    nombre: str = Field(min_length=1, max_length=120, pattern=r"^[A-Za-z0-9._-]+$")
-    version: str = Field(min_length=1, max_length=40, pattern=r"^[A-Za-z0-9._-]+$")
+    nombre: NombreModelo
+    version: VersionModelo
+    # Presente cuando el modelo se acaba de subir desde la interfaz: la API lo
+    # valida y lo escribe como modelo.json al lado del ONNX. Ausente cuando el
+    # modelo ya estaba en el bucket con su contrato.
+    contrato: dict[str, Any] | None = None
+
+
+class SubidaModeloRespuesta(BaseModel):
+    prefix: str
+    subida: SubidaRespuesta
+
+    @staticmethod
+    def desde(c: SubidaModelo) -> "SubidaModeloRespuesta":
+        return SubidaModeloRespuesta(
+            prefix=c.prefix, subida=SubidaRespuesta(url=c.subida.url, campos=c.subida.campos),
+        )
 
 
 class ModeloRespuesta(BaseModel):
@@ -71,11 +103,6 @@ class CrearEstudioPeticion(BaseModel):
     nombre_archivo: str = Field(min_length=1, max_length=255)
     content_type: str
     tamano_bytes: int = Field(gt=0)
-
-
-class SubidaRespuesta(BaseModel):
-    url: str
-    campos: dict[str, str]
 
 
 class EstudioCreadoRespuesta(BaseModel):

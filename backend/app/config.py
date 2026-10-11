@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     intervalo_despacho_s: float = 1.0
     huerfanos_minutos: int = 2               # en_curso sin actualizar → vuelve a pendiente
     max_bytes_estudio: int = 20 * 1024 * 1024
+    max_bytes_modelo: int = 512 * 1024 * 1024
     despachador_activo: bool = True          # False para tests o para separar roles (en sqs: el reenviador)
     reenvio_minutos: int = 5                 # sqs: pendiente sin tomar → se vuelve a encolar
     vencimiento_en_curso_minutos: int = 10   # sqs: en_curso sin noticias → error

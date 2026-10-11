@@ -1,12 +1,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 from uuid import UUID
 
 from ...dominio.contrato import ContratoInvalido, ContratoModelo
-from ...dominio.errores import EntradaInvalida
+from ...dominio.errores import Conflicto, EntradaInvalida
 from ...dominio.modelo import Modelo
-from ..puertos import CatalogoModelosEnBucket, Reloj, RepositorioModelos
+from ..puertos import CatalogoModelosEnBucket, Reloj, RepositorioModelos, SubidaFirmada
+
+
+def prefijo_de(prefijo_base: str, nombre: str, version: str) -> str:
+    """modelos/<nombre>/<version>/, con los dos segmentos validados."""
+    for campo, valor in (("nombre", nombre), ("version", version)):
+        if not valor or "/" in valor or valor in (".", ".."):
+            raise EntradaInvalida(f"{campo} inválido: '{valor}'")
+    return f"{prefijo_base}{nombre}/{version}/"
 
 
 @dataclass(frozen=True)
@@ -41,8 +50,43 @@ class ListarModelosDisponibles:
         return sorted(salida, key=lambda m: (m.nombre, m.version))
 
 
+@dataclass(frozen=True)
+class SubidaModelo:
+    prefix: str
+    subida: SubidaFirmada
+
+
+class PrepararSubidaModelo:
+    """Firma la subida del ONNX: del navegador directo al bucket, sin pasar por la API.
+
+    Es el mismo mecanismo que usan los estudios (URL prefirmada), por la misma
+    razón: un modelo pesa decenas o cientos de MB y no tiene por qué atravesar
+    la capa de aplicación.
+    """
+
+    def __init__(self, catalogo: CatalogoModelosEnBucket, max_bytes: int, prefijo_modelos: str):
+        self._catalogo = catalogo
+        self._max_bytes = max_bytes
+        self._prefijo = prefijo_modelos
+
+    def ejecutar(self, nombre: str, version: str, tamano_bytes: int) -> SubidaModelo:
+        if tamano_bytes <= 0 or tamano_bytes > self._max_bytes:
+            raise EntradaInvalida(f"el modelo tiene que pesar entre 1 y {self._max_bytes} bytes")
+        prefix = prefijo_de(self._prefijo, nombre, version)
+        if self._catalogo.existe(prefix):
+            raise Conflicto(
+                f"ya hay un modelo en {prefix}: una versión publicada no se pisa, subí otra versión"
+            )
+        return SubidaModelo(prefix=prefix, subida=self._catalogo.firmar_subida(prefix, self._max_bytes))
+
+
 class PublicarModelo:
-    """Simula la subida de un modelo: lo da de alta y lo deja en la cola de evaluación."""
+    """Da de alta un modelo del bucket y lo deja en la cola de evaluación.
+
+    Con `contrato`, viene de la subida desde la interfaz: se valida, se confirma
+    que el ONNX llegó y recién ahí se escribe el modelo.json al lado. Sin él, el
+    modelo ya estaba en el bucket con su contrato (la subida a mano del operador).
+    """
 
     def __init__(self, catalogo: CatalogoModelosEnBucket, modelos: RepositorioModelos, reloj: Reloj,
                  prefijo_modelos: str):
@@ -51,23 +95,34 @@ class PublicarModelo:
         self._reloj = reloj
         self._prefijo = prefijo_modelos
 
-    def ejecutar(self, nombre: str, version: str) -> Modelo:
-        prefix = f"{self._prefijo}{nombre}/{version}/"
+    def ejecutar(self, nombre: str, version: str, contrato_crudo: dict[str, Any] | None = None) -> Modelo:
+        prefix = prefijo_de(self._prefijo, nombre, version)
+        crudo = contrato_crudo if contrato_crudo is not None else self._catalogo.leer_contrato(prefix)
         try:
-            contrato = ContratoModelo.desde_json(self._catalogo.leer_contrato(prefix))
+            contrato = ContratoModelo.desde_json(crudo)
         except ContratoInvalido as e:
             raise EntradaInvalida(f"modelo.json inválido: {e}") from e
         if (contrato.nombre, contrato.version) != (nombre, version):
             raise EntradaInvalida(
                 f"modelo.json dice {contrato.nombre} v{contrato.version} pero está en el prefijo de {nombre} v{version}"
             )
+
         ahora = self._reloj.ahora()
         existente = self._modelos.buscar(nombre, version)
+        # El alta va primero porque es la que puede dar 409: así no escribimos en
+        # S3 para después rechazar el pedido. Nada se persiste hasta el guardar.
         if existente is None:
             modelo = Modelo.publicar(contrato, prefix, ahora)
         else:
             existente.republicar(contrato, ahora)
             modelo = existente
+
+        if contrato_crudo is not None:
+            # El ONNX tiene que estar antes de escribir su contrato al lado:
+            # un modelo.json sin modelo.onnx haría fallar la evaluación.
+            self._catalogo.describir_modelo(prefix)
+            self._catalogo.escribir_contrato(prefix, contrato_crudo)
+
         self._modelos.guardar(modelo)
         return modelo
 

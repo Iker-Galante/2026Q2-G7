@@ -2,9 +2,10 @@
 
 Marketplace de modelos de IA clínica · Cloud Computing 82.08 · ITBA.
 
-Pre-MVP: una pantalla para **publicar un modelo** (simulado: el ONNX ya está en S3, el botón lo da
-de alta y `eval-1` lo evalúa contra el conjunto reservado) e **inferir una imagen** (cola en
-Postgres, despachador en el backend, worker de inferencia detrás del ALB interno).
+Pre-MVP: una portada que cuenta qué ofrece Ateneo y dos secciones detrás, una por público.
+**Publicar un modelo** (el ONNX va del navegador directo al bucket con una URL prefirmada, la API
+valida su contrato y `eval-1` lo mide contra el conjunto reservado) y **consultar un estudio**
+(cola en Postgres, despachador en el backend, worker de inferencia detrás del ALB interno).
 
 - [specs.md](specs.md) · qué hace: flujos, API, contrato del modelo, esquema, criterios de aceptación.
 - [architecture.md](architecture.md) · cómo está construido: capas, puertos y adaptadores, SOLID, despliegue.
@@ -17,7 +18,7 @@ ateneo_ml/    preprocesamiento + motor ONNX + métricas, compartido por worker y
 backend/      FastAPI: API, sitio estático, despachador de trabajos (capa app)
 worker/       FastAPI: /inferir (capa inferencia, sin estado, sin base)
 evaluador/    proceso que evalúa modelos pendientes (eval-1, subred aislada)
-frontend/     React + Vite + TypeScript (una página: Laboratorio)
+frontend/     React + Vite + TypeScript (portada + publicación + consulta)
 migraciones/  SQL
 tools/        bajar y verificar el modelo, preparar y subir el conjunto, migrar
 infra/        user data, .env de ejemplo, desplegar.sh, refrescar.sh
@@ -34,19 +35,28 @@ contenedor. El backend sirve el frontend compilado en `/`, igual que en la capa 
 docker compose up -d --build            # db, minio, migraciones, backend, worker, evaluador
 ```
 
-Abrí <http://localhost:8080>. Todavía no hay modelos: hay que "subir uno a mano".
+**El sitio se compila adentro de la imagen del backend** (`docker/Dockerfile.backend` tiene una
+etapa de node), así que después de tocar `frontend/` o `backend/` hay que reconstruir:
+`docker compose up -d --build backend`. Si la interfaz es nueva pero el backend quedó viejo, subir
+un modelo falla con «Method Not Allowed»: la ruta `POST /api/modelos/subidas` todavía no existe de
+ese lado y el pedido cae en `GET /api/modelos/{id}`.
+
+Abrí <http://localhost:8080>. Todavía no hay modelos ni conjunto reservado: los dos comandos de
+acá abajo bajan el ONNX y el conjunto; el modelo se sube después desde la propia pantalla.
 
 ```bash
-# 1. el modelo ONNX (16 MB) → queda en ./tmp/modelo y en el bucket ateneo-modelos de MinIO
-docker compose run --rm herramientas python tools/descargar_modelo.py --carpeta /salida/modelo
+# 1. el modelo ONNX (16 MB) y su modelo.json → quedan en ./tmp/modelo, para subirlos desde la web
+docker compose run --rm herramientas python tools/descargar_modelo.py --carpeta /salida/modelo --solo-descargar
 
 # 2. el conjunto reservado (200 casos), bajado de Hugging Face: no hace falta cuenta de Kaggle
 docker compose run --rm herramientas python tools/preparar_conjunto.py \n  --hf hf-vision/chest-xray-pneumonia --split test --por-clase 100 --salida /salida/torax-rx/v1
 docker compose run --rm herramientas python tools/subir_conjunto.py /salida/torax-rx/v1
 ```
 
-Después, en la pantalla: **Publicar modelo** (el evaluador tarda 2-4 min en CPU con 200 casos)
-e **Inferir** con cualquiera de las radiografías que quedaron en `tmp/torax-rx/v1/casos/`.
+Después, en `/publicar`: arrastrá `tmp/modelo/modelo.onnx` y `tmp/modelo/modelo.json` a la zona de
+subida y apretá **Subir y publicar** (el evaluador tarda 2-4 min en CPU con 200 casos). Y en
+`/consulta`: **Consultar** con cualquiera de las radiografías que quedaron en
+`tmp/torax-rx/v1/casos/`.
 
 Útiles:
 
@@ -66,6 +76,10 @@ pip install -r requirements-dev.txt
 pytest                                               # tests de ateneo_ml, evaluador, backend
 cd frontend && npm install && npm run dev            # http://localhost:5173, proxy /api → :8080
 ```
+
+El 5173 es **solo para desarrollar** con recarga en caliente, y necesita el Docker levantado: hace
+proxy de `/api` al 8080. La aplicación se abre en <http://localhost:8080>, donde el backend sirve
+el sitio y la API desde el mismo origen, igual que el ALB en AWS.
 
 ## Desplegar en AWS Academy
 
