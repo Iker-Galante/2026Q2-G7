@@ -201,3 +201,33 @@ class RepositorioTrabajosPostgres:
                 (minutos,),
             )
             return cur.rowcount
+
+    # ---- TrabajosSinEnviar (modo sqs) ----
+
+    def tomar_para_reenviar(self, minutos: int, limite: int) -> list[Trabajo]:
+        """Atómico: tocar `actualizado` hace que otro backend no los reenvíe en la misma vuelta."""
+        with self._pool.connection() as conn:
+            filas = conn.execute(
+                f"""
+                update trabajo set actualizado = now()
+                 where id in (select id from trabajo
+                               where estado = 'pendiente' and actualizado < now() - make_interval(mins => %s)
+                               order by actualizado
+                               for update skip locked
+                               limit %s)
+                returning {COLUMNAS_TRABAJO}
+                """,
+                (minutos, limite),
+            ).fetchall()
+        return [_fila_a_trabajo(f) for f in filas]
+
+    def vencer_en_curso(self, minutos: int, motivo: str) -> int:
+        with self._pool.connection() as conn:
+            cur = conn.execute(
+                """
+                update trabajo set estado = 'error', error = %s, actualizado = now()
+                 where estado = 'en_curso' and actualizado < now() - make_interval(mins => %s)
+                """,
+                (motivo, minutos),
+            )
+            return cur.rowcount

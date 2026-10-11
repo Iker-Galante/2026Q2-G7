@@ -37,8 +37,9 @@ async def ciclo_de_vida(app: FastAPI):
     tarea = None
     if settings.despachador_activo:
         tarea = asyncio.create_task(contenedor.despachador.correr(detener), name="despachador")
-    log.info("backend listo · inferencia=%s · modelos=%s · estudios=%s",
-             settings.inferencia_url, settings.bucket_modelos, settings.bucket_estudios)
+    destino = settings.cola_inferencias_url if settings.modo_inferencia == "sqs" else settings.inferencia_url
+    log.info("backend listo · modo=%s · inferencia=%s · modelos=%s · estudios=%s",
+             settings.modo_inferencia, destino, settings.bucket_modelos, settings.bucket_estudios)
     try:
         yield
     finally:

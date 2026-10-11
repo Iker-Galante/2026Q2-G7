@@ -14,14 +14,8 @@ class ClienteInferenciaHttp:
         self._cliente = httpx.Client(base_url=base_url.rstrip("/"), timeout=httpx.Timeout(timeout_s, connect=5.0))
 
     def inferir(self, p: PeticionInferencia) -> ResultadoInferencia:
-        cuerpo = {
-            "trabajo_id": str(p.trabajo_id),
-            "modelo": {"nombre": p.modelo_nombre, "version": p.modelo_version,
-                       "bucket": p.modelo_bucket, "prefix": p.modelo_prefix},
-            "estudio": {"bucket": p.estudio_bucket, "key": p.estudio_key},
-        }
         try:
-            r = self._cliente.post("/inferir", json=cuerpo)
+            r = self._cliente.post("/inferir", json=p.como_mensaje())
         except httpx.TimeoutException as e:
             raise ServicioNoDisponible(f"el worker no respondió a tiempo: {e.__class__.__name__}") from e
         except httpx.HTTPError as e:

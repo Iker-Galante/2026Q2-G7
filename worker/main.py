@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+from contextlib import asynccontextmanager
 
 import boto3
 from botocore.config import Config as BotoConfig
@@ -20,6 +21,7 @@ from ateneo_ml.errores import ImagenIlegible, ModeloIncompatible
 
 from .aplicacion import Inferir
 from .config import Settings
+from .consumidor import Consumidor, ProcesarMensaje
 from .infraestructura.fuente_s3 import FuenteS3
 from .infraestructura.proveedor_efs_s3 import ProveedorEfsS3
 from .puertos import NoEncontrado, RefModelo, RefObjeto
@@ -57,6 +59,7 @@ class InferirRespuesta(BaseModel):
 
 def crear_app() -> FastAPI:
     settings = Settings.desde_entorno()
+    settings.validar()
     s3 = boto3.client("s3", region_name=settings.aws_region,
                       config=BotoConfig(connect_timeout=5, read_timeout=15, retries={"max_attempts": 2},
                                         s3={"addressing_style": "path" if os.environ.get("AWS_ENDPOINT_URL") else "auto"}))
@@ -65,7 +68,28 @@ def crear_app() -> FastAPI:
         FuenteS3(s3),
     )
 
-    app = FastAPI(title="Ateneo worker", docs_url=None, redoc_url=None)
+    @asynccontextmanager
+    async def ciclo_de_vida(_: FastAPI):
+        consumidor = None
+        if settings.modo_inferencia == "sqs":
+            from .infraestructura.cola_sqs import ColaSqs
+            from .infraestructura.trabajos_postgres import ResultadosPostgres
+
+            sqs = boto3.client("sqs", region_name=settings.aws_region,
+                               config=BotoConfig(connect_timeout=5, read_timeout=settings.espera_s + 10,
+                                                 retries={"max_attempts": 3}))
+            cola = ColaSqs(sqs, settings.cola_inferencias_url)
+            procesar = ProcesarMensaje(inferir, cola, ResultadosPostgres(settings.database_url),
+                                       settings.max_intentos, settings.reintento_s)
+            consumidor = Consumidor(cola, procesar, settings.espera_s)
+            consumidor.arrancar()
+        try:
+            yield
+        finally:
+            if consumidor is not None:
+                consumidor.detener()
+
+    app = FastAPI(title="Ateneo worker", docs_url=None, redoc_url=None, lifespan=ciclo_de_vida)
 
     @app.get("/health")
     def health() -> dict:
@@ -99,7 +123,7 @@ def crear_app() -> FastAPI:
     async def _contrato(_: Request, e: ContratoInvalido):
         return JSONResponse(400, {"error": "contrato_invalido", "detalle": str(e)})
 
-    log.info("worker listo · modelos_dir=%s", settings.modelos_dir)
+    log.info("worker listo · modo=%s · modelos_dir=%s", settings.modo_inferencia, settings.modelos_dir)
     return app
 
 

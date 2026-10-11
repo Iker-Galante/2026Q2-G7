@@ -21,6 +21,7 @@ frontend/     React + Vite + TypeScript (una página: Laboratorio)
 migraciones/  SQL
 tools/        bajar y verificar el modelo, preparar y subir el conjunto, migrar
 infra/        user data, .env de ejemplo, desplegar.sh, refrescar.sh
+terraform/    toda la infraestructura como código, con SQS, SNS y Lambda
 docker/       Dockerfiles para correr todo en local
 ```
 
@@ -68,6 +69,22 @@ cd frontend && npm install && npm run dev            # http://localhost:5173, pr
 
 ## Desplegar en AWS Academy
 
-Ver [infra/DESPLIEGUE.md](infra/DESPLIEGUE.md). Resumen: `bash infra/desplegar.sh backend|worker|frontend`
+**Con Terraform (recomendado):** ver [terraform/README.md](terraform/README.md). En CloudShell:
+
+```bash
+git clone https://github.com/nnicokim/TP-AWS.git ~/ateneo && cd ~/ateneo   # después: git pull
+bash terraform/scripts/bootstrap-estado.sh                 # una vez por cuenta
+cp terraform/terraform.tfvars.example terraform/terraform.tfvars
+bash terraform/scripts/tf.sh apply -target='aws_s3_bucket.b'
+bash terraform/scripts/entorno-desde-terraform.sh
+bash infra/desplegar.sh todo
+bash terraform/scripts/tf.sh apply                          # todo lo demás
+bash terraform/scripts/tf.sh apply -var encendido=false     # antes de End Lab
+```
+
+Cada integrante que despliegue en su propio Learner Lab obtiene buckets con un sufijo al azar,
+así que no hay choques de nombres (ver «Un equipo de varias personas» en el README de Terraform).
+
+**A mano, como la guía:** ver [infra/DESPLIEGUE.md](infra/DESPLIEGUE.md). Resumen: `bash infra/desplegar.sh backend|worker|frontend`
 sube los paquetes al bucket de despliegue y `bash infra/refrescar.sh asg-app|asg-inf` reemplaza las
 instancias; `eval-1` se termina y se relanza desde `lt-eval`.

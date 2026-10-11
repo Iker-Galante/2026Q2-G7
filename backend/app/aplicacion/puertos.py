@@ -41,6 +41,15 @@ class PeticionInferencia:
     estudio_bucket: str
     estudio_key: str
 
+    def como_mensaje(self) -> dict[str, Any]:
+        """El cuerpo que recibe el worker: por HTTP en /inferir o como mensaje de SQS."""
+        return {
+            "trabajo_id": str(self.trabajo_id),
+            "modelo": {"nombre": self.modelo_nombre, "version": self.modelo_version,
+                       "bucket": self.modelo_bucket, "prefix": self.modelo_prefix},
+            "estudio": {"bucket": self.estudio_bucket, "key": self.estudio_key},
+        }
+
 
 # ---- repositorios -------------------------------------------------------------------
 
@@ -67,6 +76,12 @@ class ColaTrabajos(Protocol):
     def reencolar_huerfanos(self, minutos: int) -> int: ...
 
 
+class TrabajosSinEnviar(Protocol):
+    """Modo sqs: la usa solo el reenviador."""
+    def tomar_para_reenviar(self, minutos: int, limite: int) -> list[Trabajo]: ...  # pendientes viejos; toca `actualizado`
+    def vencer_en_curso(self, minutos: int, motivo: str) -> int: ...                # en_curso sin noticias → error
+
+
 # ---- almacenamiento -----------------------------------------------------------------
 
 class AlmacenEstudios(Protocol):
@@ -83,6 +98,11 @@ class CatalogoModelosEnBucket(Protocol):
 
 class ClienteInferencia(Protocol):
     def inferir(self, p: PeticionInferencia) -> ResultadoInferencia: ...  # ServicioNoDisponible | FalloDefinitivo
+
+
+class ColaInferencias(Protocol):
+    """Modo sqs: deja el pedido para que lo tome algún worker."""
+    def enviar(self, p: PeticionInferencia) -> None: ...                  # ServicioNoDisponible
 
 
 class Reloj(Protocol):

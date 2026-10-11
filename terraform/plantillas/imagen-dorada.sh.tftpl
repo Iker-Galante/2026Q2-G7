@@ -1,0 +1,53 @@
+#!/bin/bash
+# Constructor de la imagen dorada (guía §8.2). Al terminar bien se apaga solo, y Terraform
+# hace la AMI de la instancia detenida. Si algo falla, set -e corta antes del apagado y el
+# apply se queda esperando hasta su límite: el motivo está en get-console-output.
+set -euxo pipefail
+
+dnf install -y python3.11 python3.11-pip amazon-efs-utils unzip
+python3.11 -m venv /opt/venv
+/opt/venv/bin/pip install -q onnxruntime==1.18.0 "numpy<2" pillow pydicom boto3 fastapi uvicorn "psycopg[binary]"
+mkdir -p /opt/worker /mnt/modelos
+
+/opt/venv/bin/python -c "import numpy, onnxruntime as o; print('VERSIONES numpy', numpy.__version__, '· onnxruntime', o.__version__)"
+# numpy 2 rompe onnxruntime 1.18 con _ARRAY_API not found: mejor fallar acá que en cada worker.
+/opt/venv/bin/python -c "import numpy; assert numpy.__version__.startswith('1.'), numpy.__version__"
+
+cat > /etc/systemd/system/ateneo-worker.service <<'UNIDAD'
+[Unit]
+Description=Ateneo worker de inferencia
+After=network-online.target
+[Service]
+EnvironmentFile=/etc/ateneo.env
+WorkingDirectory=/opt/worker
+ExecStart=/opt/venv/bin/uvicorn worker.main:app --host 0.0.0.0 --port 8081
+Restart=always
+StandardOutput=journal+console
+StandardError=journal+console
+[Install]
+WantedBy=multi-user.target
+UNIDAD
+
+cat > /etc/systemd/system/ateneo-evaluador.service <<'UNIDAD'
+[Unit]
+Description=Ateneo evaluador de modelos
+After=network-online.target
+[Service]
+EnvironmentFile=/etc/ateneo.env
+WorkingDirectory=/opt/worker
+ExecStart=/opt/venv/bin/python -m evaluador.main
+Restart=always
+StandardOutput=journal+console
+StandardError=journal+console
+[Install]
+WantedBy=multi-user.target
+UNIDAD
+
+# Definidas, ni habilitadas ni iniciadas: las arranca el user data de cada capa.
+systemctl daemon-reload
+touch /opt/IMAGEN-LISTA
+
+# Que cada instancia nacida de la imagen corra su user data como nueva, sin el log de esta.
+cloud-init clean --logs
+echo "IMAGEN LISTA, apagando"
+poweroff

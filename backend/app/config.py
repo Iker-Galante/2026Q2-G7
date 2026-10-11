@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -12,7 +15,11 @@ class Settings(BaseSettings):
     aws_region: str = "us-east-1"
     bucket_modelos: str
     bucket_estudios: str
-    inferencia_url: str                      # http://internal-alb-...:8081
+    # "http": el despachador lleva cada trabajo al ALB interno (INFERENCIA_URL).
+    # "sqs":  el backend encola en SQS (COLA_INFERENCIAS_URL) y los workers consumen.
+    modo_inferencia: Literal["http", "sqs"] = "http"
+    inferencia_url: str | None = None        # http://internal-alb-...:8081
+    cola_inferencias_url: str | None = None  # https://sqs.us-east-1.amazonaws.com/<cuenta>/ateneo-inferencias
     origen_web: str | None = None            # informativo; sitio y API comparten origen
 
     web_dir: str = "/opt/ateneo/web"         # de dónde se sirve el sitio estático
@@ -21,7 +28,9 @@ class Settings(BaseSettings):
     intervalo_despacho_s: float = 1.0
     huerfanos_minutos: int = 2               # en_curso sin actualizar → vuelve a pendiente
     max_bytes_estudio: int = 20 * 1024 * 1024
-    despachador_activo: bool = True          # False para tests o para separar roles
+    despachador_activo: bool = True          # False para tests o para separar roles (en sqs: el reenviador)
+    reenvio_minutos: int = 5                 # sqs: pendiente sin tomar → se vuelve a encolar
+    vencimiento_en_curso_minutos: int = 10   # sqs: en_curso sin noticias → error
 
     # Solo desarrollo local: host público de MinIO para las URLs prefirmadas
     # (el backend habla con http://minio:9000 pero el navegador ve http://localhost:9000).
@@ -29,3 +38,11 @@ class Settings(BaseSettings):
 
     prefijo_modelos: str = "modelos/"
     prefijo_estudios: str = "estudios/"
+
+    @model_validator(mode="after")
+    def _modo_completo(self) -> "Settings":
+        if self.modo_inferencia == "http" and not self.inferencia_url:
+            raise ValueError("modo http: falta INFERENCIA_URL")
+        if self.modo_inferencia == "sqs" and not self.cola_inferencias_url:
+            raise ValueError("modo sqs: falta COLA_INFERENCIAS_URL")
+        return self

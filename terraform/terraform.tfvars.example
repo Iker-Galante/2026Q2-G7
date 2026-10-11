@@ -1,0 +1,17 @@
+# cp terraform.tfvars.example terraform.tfvars  (terraform.tfvars no se commitea)
+
+# Sufijo de los cinco buckets. Vacío = uno al azar que queda fijo en el estado.
+sufijo = ""
+
+# Recibe las alarmas (DLQ, cola atascada, backend sin instancias sanas) y el informe del guardián.
+email_alertas = ""
+
+# "sqs" (por defecto): cola SQS + DLQ, sin ALB interno. "http": como la guía, con ALB interno.
+modo_inferencia = "sqs"
+
+# Dejalo vacío la primera vez: Terraform construye la imagen dorada. Después podés fijarla acá.
+ami_worker_id = ""
+
+# Si la cuenta no permite c5.large: m5.large.
+# tipo_worker = "m5.large"
+# tipo_eval   = "m5.large"
