@@ -4,6 +4,8 @@ GET /callback?code=…&state=…  Canjea el código por los tokens en el endpoin
                               Cognito, con el secreto del cliente, y redirige al sitio con los
                               tokens en el fragmento: http://<sitio>/#access_token=…&id_token=…
                               El fragmento no viaja al servidor: S3 nunca lo ve ni lo registra.
+                              Hay un cliente por tipo de cuenta; el sitio pone el tipo al
+                              principio del state ("institucion.<al azar>").
 GET /logout                   Cognito ya cerró su sesión; vuelve al sitio.
 
 Si algo falla, redirige igual al sitio con #error=… para que la pantalla lo muestre. Nunca
@@ -24,8 +26,7 @@ log = logging.getLogger()
 log.setLevel(logging.INFO)
 
 DOMINIO = os.environ["COGNITO_DOMINIO"]       # https://ateneo-xxx.auth.us-east-1.amazoncognito.com
-CLIENTE_ID = os.environ["CLIENTE_ID"]
-CLIENTE_SECRETO = os.environ["CLIENTE_SECRETO"]
+CLIENTES = json.loads(os.environ["CLIENTES"])  # {"publicador": {"id": …, "secreto": …}, "institucion": …}
 URL_CALLBACK = os.environ["URL_CALLBACK"]     # la misma que mandó el sitio a /oauth2/authorize
 URL_SITIO = os.environ["URL_SITIO"].rstrip("/")
 
@@ -38,15 +39,20 @@ def _al_sitio(**fragmento: str) -> dict:
     return _redirigir(f"{URL_SITIO}/#{urllib.parse.urlencode(fragmento)}")
 
 
-def _canjear(codigo: str) -> dict:
+def _cliente(estado: str) -> dict:
+    """El cliente con el que el sitio pidió el código: el tipo de cuenta va antes del primer punto."""
+    return CLIENTES.get(estado.split(".", 1)[0]) or CLIENTES["publicador"]
+
+
+def _canjear(codigo: str, cliente: dict) -> dict:
     """POST /oauth2/token con grant authorization_code. Cliente confidencial: Basic auth."""
     cuerpo = urllib.parse.urlencode({
         "grant_type": "authorization_code",
-        "client_id": CLIENTE_ID,
+        "client_id": cliente["id"],
         "code": codigo,
         "redirect_uri": URL_CALLBACK,
     }).encode()
-    credencial = base64.b64encode(f"{CLIENTE_ID}:{CLIENTE_SECRETO}".encode()).decode()
+    credencial = base64.b64encode(f"{cliente['id']}:{cliente['secreto']}".encode()).decode()
     pedido = urllib.request.Request(
         f"{DOMINIO}/oauth2/token", data=cuerpo, method="POST",
         headers={"Content-Type": "application/x-www-form-urlencoded", "Authorization": f"Basic {credencial}"},
@@ -72,7 +78,7 @@ def handler(evento: dict, _contexto) -> dict:
         return _al_sitio(error="sin_codigo", error_description="Cognito no mandó el código", state=estado)
 
     try:
-        tokens = _canjear(codigo)
+        tokens = _canjear(codigo, _cliente(estado))
     except urllib.error.HTTPError as e:
         # 400 invalid_grant: el código ya se usó, venció (5 min) o el redirect_uri no coincide.
         try:

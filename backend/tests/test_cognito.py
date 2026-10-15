@@ -41,11 +41,16 @@ def _token(clave=CLAVE, **cambios) -> str:
 
 @pytest.fixture
 def verificador():
-    return VerificadorCognito("us-east-1", POOL, CLIENTE, jwks=JwksFijo())
+    return VerificadorCognito("us-east-1", POOL, [CLIENTE, "cliente-institucion"], jwks=JwksFijo())
 
 
-def test_access_token_valido_devuelve_el_sub(verificador):
-    assert verificador.verificar(_token()) == "sub-123"
+def test_access_token_valido_devuelve_el_usuario_con_sus_grupos(verificador):
+    u = verificador.verificar(_token(**{"cognito:groups": ["publicador"]}))
+    assert u.sub == "sub-123" and u.grupos == ("publicador",)
+
+
+def test_acepta_cualquiera_de_los_clientes_del_pool(verificador):
+    assert verificador.verificar(_token(client_id="cliente-institucion")).grupos == ()
 
 
 @pytest.mark.parametrize("cambios", [
@@ -71,15 +76,16 @@ def test_rechaza_basura(verificador):
 
 
 def test_sin_claves_es_servicio_no_disponible():
-    v = VerificadorCognito("us-east-1", POOL, CLIENTE, jwks=JwksFijo(error=jwt.PyJWKClientConnectionError("sin red")))
+    v = VerificadorCognito("us-east-1", POOL, [CLIENTE], jwks=JwksFijo(error=jwt.PyJWKClientConnectionError("sin red")))
     with pytest.raises(ServicioNoDisponible):
         v.verificar(_token())
 
 
-def test_settings_pide_los_dos_datos_de_cognito():
+def test_settings_pide_el_pool_y_los_clientes_de_cognito():
     base = {"database_url": "postgresql://x", "bucket_modelos": "m", "bucket_estudios": "e",
-            "inferencia_url": "http://worker:8081"}
+            "cola_inferencias_url": "http://sqs/q"}
     assert Settings(**base).cognito_user_pool_id is None
-    assert Settings(**base, cognito_user_pool_id=POOL, cognito_client_id=CLIENTE).cognito_client_id == CLIENTE
+    s = Settings(**base, cognito_user_pool_id=POOL, cognito_client_ids=f"{CLIENTE}, otro")
+    assert s.clientes_cognito == [CLIENTE, "otro"]
     with pytest.raises(ValueError):
         Settings(**base, cognito_user_pool_id=POOL)

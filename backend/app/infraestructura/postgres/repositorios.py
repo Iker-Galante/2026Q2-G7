@@ -1,8 +1,4 @@
-"""Repositorios con SQL explícito. Cada método es una transacción corta.
-
-No hay transacciones largas a propósito: la llamada al worker (hasta 30 s)
-nunca puede quedar adentro de una.
-"""
+"""Repositorios con SQL explícito. Cada método es una transacción corta."""
 
 from __future__ import annotations
 
@@ -15,8 +11,8 @@ from psycopg_pool import ConnectionPool
 
 from ...dominio.errores import NoEncontrado
 from ...dominio.estudio import Estudio
-from ...dominio.modelo import Modelo
-from ...dominio.trabajo import Trabajo
+from ...dominio.modelo import Modelo, ResultadoEvaluacion
+from ...dominio.trabajo import ResultadoInferencia, Trabajo
 
 
 def _float(v: Any) -> float | None:
@@ -55,6 +51,7 @@ class RepositorioModelosPostgres:
                         %(conjunto)s, %(conjunto_version)s, %(manifiesto)s, %(evaluador_id)s,
                         %(evaluado_en)s, %(error)s, %(creado)s, %(publicado)s)
                 on conflict (id) do update set
+                    actualizado = now(),
                     tipo_estudio = excluded.tipo_estudio, tarea = excluded.tarea,
                     etiquetas = excluded.etiquetas, contrato = excluded.contrato,
                     estado_evaluacion = excluded.estado_evaluacion, accuracy = excluded.accuracy,
@@ -93,6 +90,18 @@ class RepositorioModelosPostgres:
         with self._pool.connection() as conn:
             filas = conn.execute(f"select {COLUMNAS_MODELO} from modelo order by publicado desc").fetchall()
         return [_fila_a_modelo(f) for f in filas]
+
+    # ---- EvaluacionesSinNoticias (procesador) ----
+
+    def vencer_en_curso(self, minutos: int, motivo: str) -> int:
+        with self._pool.connection() as conn:
+            return conn.execute(
+                """
+                update modelo set estado_evaluacion = 'error', error = %s, actualizado = now()
+                 where estado_evaluacion = 'en_curso' and actualizado < now() - make_interval(mins => %s)
+                """,
+                (motivo, minutos),
+            ).rowcount
 
 
 # ---- estudio ------------------------------------------------------------------------
@@ -142,8 +151,6 @@ def _fila_a_trabajo(f: dict[str, Any]) -> Trabajo:
 
 
 class RepositorioTrabajosPostgres:
-    """Repositorio y cola a la vez: son la misma tabla."""
-
     def __init__(self, pool: ConnectionPool):
         self._pool = pool
 
@@ -172,37 +179,7 @@ class RepositorioTrabajosPostgres:
             raise NoEncontrado(f"no existe el trabajo {id}")
         return _fila_a_trabajo(fila)
 
-    # ---- ColaTrabajos ----
-
-    def tomar_pendiente(self, max_intentos: int) -> Trabajo | None:
-        with self._pool.connection() as conn:
-            fila = conn.execute(
-                f"""
-                update trabajo set estado = 'en_curso', intentos = intentos + 1, actualizado = now()
-                 where id = (select id from trabajo
-                              where estado = 'pendiente' and intentos < %s
-                              order by actualizado
-                              for update skip locked
-                              limit 1)
-                returning {COLUMNAS_TRABAJO}
-                """,
-                (max_intentos,),
-            ).fetchone()
-        return _fila_a_trabajo(fila) if fila else None
-
-    def reencolar_huerfanos(self, minutos: int) -> int:
-        with self._pool.connection() as conn:
-            cur = conn.execute(
-                """
-                update trabajo set estado = 'pendiente', actualizado = now(),
-                       error = coalesce(error, '') || ' [huérfano reencolado]'
-                 where estado = 'en_curso' and actualizado < now() - make_interval(mins => %s)
-                """,
-                (minutos,),
-            )
-            return cur.rowcount
-
-    # ---- TrabajosSinEnviar (modo sqs) ----
+    # ---- TrabajosSinEnviar (procesador) ----
 
     def tomar_para_reenviar(self, minutos: int, limite: int) -> list[Trabajo]:
         """Atómico: tocar `actualizado` hace que otro backend no los reenvíe en la misma vuelta."""
@@ -231,3 +208,66 @@ class RepositorioTrabajosPostgres:
                 (motivo, minutos),
             )
             return cur.rowcount
+
+
+# ---- resultados (procesador) --------------------------------------------------------
+
+SIN_TERMINAR = "('pendiente', 'en_curso')"
+
+
+class RegistroResultadosPostgres:
+    """Cada update lleva la condición de estado: un resultado repetido o tardío no pisa nada."""
+
+    def __init__(self, pool: ConnectionPool):
+        self._pool = pool
+
+    def _aplicar(self, sql: str, params: tuple) -> bool:
+        with self._pool.connection() as conn:
+            return conn.execute(sql, params).rowcount == 1
+
+    def inferencia_en_curso(self, trabajo_id: UUID, worker: str, intento: int) -> bool:
+        return self._aplicar(
+            f"""update trabajo set estado = 'en_curso', intentos = greatest(intentos, %s), worker_id = %s,
+                       actualizado = now()
+                 where id = %s and estado in {SIN_TERMINAR}""",
+            (intento, worker, trabajo_id),
+        )
+
+    def inferencia_terminada(self, trabajo_id: UUID, r: ResultadoInferencia) -> bool:
+        return self._aplicar(
+            f"""update trabajo set estado = 'ok', resultado = %s, worker_id = %s, duracion_ms = %s,
+                       error = null, actualizado = now()
+                 where id = %s and estado in {SIN_TERMINAR}""",
+            (Jsonb(r.como_dict()), r.worker_id, r.duracion_ms, trabajo_id),
+        )
+
+    def inferencia_fallida(self, trabajo_id: UUID, motivo: str) -> bool:
+        return self._aplicar(
+            f"update trabajo set estado = 'error', error = %s, actualizado = now() where id = %s and estado in {SIN_TERMINAR}",
+            (motivo, trabajo_id),
+        )
+
+    def evaluacion_en_curso(self, modelo_id: UUID, evaluador: str) -> bool:
+        return self._aplicar(
+            f"""update modelo set estado_evaluacion = 'en_curso', evaluador_id = %s, actualizado = now()
+                 where id = %s and estado_evaluacion in {SIN_TERMINAR}""",
+            (evaluador, modelo_id),
+        )
+
+    def evaluacion_terminada(self, modelo_id: UUID, r: ResultadoEvaluacion) -> bool:
+        return self._aplicar(
+            f"""update modelo set estado_evaluacion = 'ok', accuracy = %s, metricas = %s, conjunto = %s,
+                       conjunto_version = %s, manifiesto = %s, evaluador_id = %s, evaluado_en = %s,
+                       error = null, actualizado = now()
+                 where id = %s and estado_evaluacion in {SIN_TERMINAR}""",
+            (r.accuracy, Jsonb(r.metricas), r.conjunto, r.conjunto_version, Jsonb(r.manifiesto),
+             r.evaluador_id, r.evaluado_en, modelo_id),
+        )
+
+    def evaluacion_fallida(self, modelo_id: UUID, evaluador: str, motivo: str) -> bool:
+        return self._aplicar(
+            f"""update modelo set estado_evaluacion = 'error', error = %s, evaluador_id = %s, evaluado_en = now(),
+                       actualizado = now()
+                 where id = %s and estado_evaluacion in {SIN_TERMINAR}""",
+            (motivo, evaluador, modelo_id),
+        )

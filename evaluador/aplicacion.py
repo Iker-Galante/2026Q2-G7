@@ -1,4 +1,4 @@
-"""EvaluarModelo: el caso de uso que corre en eval-1.
+"""EvaluarModelo: el caso de uso que corre en el evaluador, en la subred aislada.
 
 Los casos nunca salen de la subred; lo que sale es un número.
 """
@@ -18,17 +18,17 @@ from ateneo_ml.metricas import calcular_metricas
 from ateneo_ml.motor import OnnxMotor
 
 from .puertos import (
-    ColaModelos, Conjunto, ConjuntoInvalido, DescargadorModelo, LectorConjunto, ModeloPendiente,
-    ResultadoEvaluacion,
+    Conjunto, ConjuntoInvalido, DescargadorModelo, LectorConjunto, ModeloPendiente, ResultadoEvaluacion,
+    ResultadosEvaluacion,
 )
 
 log = logging.getLogger(__name__)
 
 
 class EvaluarModelo:
-    def __init__(self, cola: ColaModelos, conjuntos: LectorConjunto, descargador: DescargadorModelo,
+    def __init__(self, resultados: ResultadosEvaluacion, conjuntos: LectorConjunto, descargador: DescargadorModelo,
                  directorio_trabajo: str, max_fraccion_errores: float, hilos: int | None = None):
-        self._cola = cola
+        self._resultados = resultados
         self._conjuntos = conjuntos
         self._descargador = descargador
         self._trabajo = Path(directorio_trabajo)
@@ -36,21 +36,26 @@ class EvaluarModelo:
         self._hilos = hilos
 
     def ejecutar(self, modelo: ModeloPendiente) -> None:
+        """Publica siempre un final, ok o error. Lo único que sale con una excepción es una
+        falla al publicar: el mensaje no se borra y SQS lo vuelve a entregar."""
         carpeta = self._trabajo / f"{modelo.nombre}-{modelo.version}"
+        self._resultados.en_curso(modelo)
         try:
             log.info("evaluando %s v%s (%s)", modelo.nombre, modelo.version, modelo.id)
             resultado = self._evaluar(modelo, carpeta)
-            self._cola.terminar_ok(modelo, resultado)
-            log.info("evaluación ok %s v%s accuracy=%s casos=%s",
-                     modelo.nombre, modelo.version, resultado.metricas["accuracy"], resultado.metricas["n_casos"])
         except (ContratoInvalido, ConjuntoInvalido, ErrorAteneoML) as e:
             log.error("evaluación falló %s v%s: %s", modelo.nombre, modelo.version, e)
-            self._cola.terminar_error(modelo, str(e))
+            self._resultados.terminar_error(modelo, str(e))
+            return
         except Exception as e:                       # noqa: BLE001 — una evaluación rota no tira el proceso
             log.exception("evaluación falló de forma inesperada %s v%s", modelo.nombre, modelo.version)
-            self._cola.terminar_error(modelo, f"{e.__class__.__name__}: {e}")
+            self._resultados.terminar_error(modelo, f"{e.__class__.__name__}: {e}")
+            return
         finally:
             shutil.rmtree(carpeta, ignore_errors=True)
+        self._resultados.terminar_ok(modelo, resultado)
+        log.info("evaluación ok %s v%s accuracy=%s casos=%s",
+                 modelo.nombre, modelo.version, resultado.metricas["accuracy"], resultado.metricas["n_casos"])
 
     def _evaluar(self, modelo: ModeloPendiente, carpeta: Path) -> ResultadoEvaluacion:
         inicio = time.perf_counter()

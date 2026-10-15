@@ -1,9 +1,10 @@
-# Guía §05: PostgreSQL 16, db.t3.micro, single-AZ, en las subredes de datos.
+# Sección 08: RDS PostgreSQL 16, db.t3.micro, cifrada, en las subredes de datos. Single-AZ
+# porque el laboratorio no permite Multi-AZ (riesgo 04). Solo la alcanzan api y procesador.
 
 resource "aws_db_subnet_group" "ateneo" {
-  name       = "ateneo-data"
-  subnet_ids = local.sub_data
-  tags       = { Name = "ateneo-data" }
+  name       = "ateneo-datos"
+  subnet_ids = local.sub["datos"]
+  tags       = { Name = "ateneo-datos" }
 }
 
 # Sin / @ " ni espacios (RDS no los acepta); el resto se codifica al armar la URL.
@@ -29,9 +30,9 @@ resource "aws_db_instance" "ateneo" {
   password = random_password.db.result
 
   db_subnet_group_name   = aws_db_subnet_group.ateneo.name
-  vpc_security_group_ids = [local.sg["data"]]
+  vpc_security_group_ids = [local.sg["db"]]
   publicly_accessible    = false
-  multi_az               = false
+  multi_az               = false # en producción, true
 
   backup_retention_period = 7
   deletion_protection     = false
@@ -41,13 +42,15 @@ resource "aws_db_instance" "ateneo" {
   tags = { Name = "ateneo-db" }
 }
 
-# El interruptor también detiene la base. Ojo: AWS la vuelve a prender sola a los 7 días;
-# el guardián (guardian.tf) la detiene de nuevo esa noche.
-resource "aws_rds_instance_state" "ateneo" {
-  identifier = aws_db_instance.ateneo.identifier
-  state      = var.encendido ? "available" : "stopped"
+# La URL completa, en Secrets Manager: ECS la inyecta como DATABASE_URL a api y procesador al
+# arrancar la tarea, sin que el código la pida. Ninguna otra tarea la recibe.
+resource "aws_secretsmanager_secret" "database_url" {
+  name                    = "ateneo/database-url"
+  description             = "postgresql:// de RDS para api y procesador"
+  recovery_window_in_days = 0 # terraform destroy la borra en el acto, y el próximo apply la recrea
 }
 
-locals {
-  database_url = "postgresql://ateneo:${urlencode(random_password.db.result)}@${aws_db_instance.ateneo.address}:5432/ateneo"
+resource "aws_secretsmanager_secret_version" "database_url" {
+  secret_id     = aws_secretsmanager_secret.database_url.id
+  secret_string = "postgresql://ateneo:${urlencode(random_password.db.result)}@${aws_db_instance.ateneo.address}:5432/ateneo"
 }

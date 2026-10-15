@@ -1,59 +1,48 @@
 output "url" {
-  description = "El sitio, en S3. El login pasa por Cognito y la API por API Gateway."
+  description = "El sitio, en S3. La verificación es abrirlo y entrar."
   value       = local.url_sitio
 }
 
 output "api" {
-  description = "API Gateway: /callback y /logout del login, y /api/* hacia el backend."
+  description = "API Gateway: /callback y /logout del login, y /api/* hacia el ALB interno."
   value       = local.url_api
 }
 
+output "admin" {
+  description = "El admin_plataforma inicial: Cognito le mandó una contraseña temporal."
+  value       = var.email_admin != "" ? var.email_admin : "(sin admin: poné email_admin en terraform.tfvars)"
+}
+
 output "cognito_login" {
-  description = "El Hosted UI de Cognito."
-  value       = local.cognito_dominio
+  value = local.cognito_dominio
 }
 
 output "cognito_user_pool" {
   value = aws_cognito_user_pool.ateneo.id
 }
 
-output "alb" {
-  description = "El backend sin pasar por API Gateway: solo para diagnóstico (pide token igual)."
-  value       = var.encendido ? "http://${aws_lb.app[0].dns_name}" : "(apagado)"
+output "version_codigo" {
+  description = "La etiqueta de las imágenes que corren."
+  value       = local.version_codigo
+}
+
+output "como_ver_el_avance" {
+  description = "La primera vez, las tareas tardan unos minutos en quedar sanas después del apply."
+  value       = <<-EOT
+    aws ecs describe-services --region ${var.region} --cluster ${aws_ecs_cluster.ateneo.name} --services ${join(" ", keys(local.servicios))} --query 'services[].[serviceName,runningCount,desiredCount]' --output table
+    aws logs tail /ecs/ateneo/api --region ${var.region} --follow
+    aws s3 cp s3://${local.buckets.artefactos}/logs/constructor-${local.version_codigo}.log -
+  EOT
 }
 
 output "buckets" {
   value = local.buckets
 }
 
+output "colas" {
+  value = { for k, q in aws_sqs_queue.cola : k => q.url }
+}
+
 output "endpoint_rds" {
   value = aws_db_instance.ateneo.address
-}
-
-output "cola_inferencias" {
-  value = aws_sqs_queue.inferencias.url
-}
-
-output "cola_inferencias_dlq" {
-  value = aws_sqs_queue.inferencias_dlq.url
-}
-
-output "tema_alertas" {
-  value = aws_sns_topic.alertas.arn
-}
-
-output "alb_interno" {
-  value = local.alb_int_dns != "" ? "http://${local.alb_int_dns}:8081" : "(no hay: modo sqs o apagado)"
-}
-
-output "ami_worker" {
-  value = local.ami_worker
-}
-
-output "eval_1" {
-  value = one(aws_instance.eval[*].id)
-}
-
-output "vpce_s3" {
-  value = aws_vpc_endpoint.s3.id
 }

@@ -1,9 +1,11 @@
-# Guía §02: VPC 10.0.0.0/16, siete subredes en cuatro capas y una de evaluación.
+# Sección 06: VPC 10.0.0.0/16, once subredes en seis capas ordenadas por sensibilidad, una tabla
+# de ruteo por capa. Ninguna pieza tiene IP pública: la única entrada es API Gateway por el VPC
+# Link y la única salida, el NAT de la capa de aplicación.
 
 resource "aws_vpc" "ateneo" {
   cidr_block           = "10.0.0.0/16"
   enable_dns_support   = true
-  enable_dns_hostnames = true
+  enable_dns_hostnames = true # los endpoints de interfaz con DNS privado lo necesitan
   tags                 = { Name = "ateneo" }
 }
 
@@ -13,12 +15,14 @@ resource "aws_internet_gateway" "ateneo" {
 }
 
 locals {
-  # capa => [cidr zona a, cidr zona b]
+  # capa => [cidr zona a, cidr zona b]. Evaluación tiene una sola: no necesita alta disponibilidad.
   subredes = {
-    public = ["10.0.0.0/24", "10.0.1.0/24"]
-    app    = ["10.0.10.0/24", "10.0.11.0/24"]
-    data   = ["10.0.20.0/24", "10.0.21.0/24"]
-    inf    = ["10.0.30.0/24", "10.0.31.0/24"]
+    publica    = ["10.0.0.0/24", "10.0.1.0/24"]   # el NAT
+    aplicacion = ["10.0.10.0/24", "10.0.11.0/24"] # VPC Link, ALB interno, api, procesador, constructor
+    datos      = ["10.0.20.0/24", "10.0.21.0/24"] # RDS
+    inferencia = ["10.0.30.0/24", "10.0.31.0/24"] # worker, puntos de montaje de EFS
+    evaluacion = ["10.0.40.0/24"]                 # evaluador, detrás de la NACL
+    endpoints  = ["10.0.50.0/24", "10.0.51.0/24"] # endpoints de interfaz de ECR, Logs y SQS
   }
   letras = ["a", "b"]
 
@@ -27,6 +31,9 @@ locals {
       for i, cidr in cidrs : "${capa}-${local.letras[i]}" => { capa = capa, cidr = cidr, zona = var.zonas[i] }
     }
   ]...)
+
+  # capa => ids de sus subredes, en orden de zona
+  sub = { for capa, cidrs in local.subredes : capa => [for i, _ in cidrs : aws_subnet.capa["${capa}-${local.letras[i]}"].id] }
 }
 
 resource "aws_subnet" "capa" {
@@ -38,138 +45,82 @@ resource "aws_subnet" "capa" {
   tags              = { Name = "ateneo-${each.key}", Capa = each.value.capa }
 }
 
-# Una sola, en la zona «a»: un trabajo por lotes que falla se relanza (§9.1).
-resource "aws_subnet" "eval" {
-  vpc_id            = aws_vpc.ateneo.id
-  cidr_block        = "10.0.40.0/24"
-  availability_zone = var.zonas[0]
-  tags              = { Name = "ateneo-eval", Capa = "eval" }
-}
+# --- Tablas de ruteo: una por capa, generadas por código --------------------------------
 
-locals {
-  sub_public = [aws_subnet.capa["public-a"].id, aws_subnet.capa["public-b"].id]
-  sub_app    = [aws_subnet.capa["app-a"].id, aws_subnet.capa["app-b"].id]
-  sub_data   = [aws_subnet.capa["data-a"].id, aws_subnet.capa["data-b"].id]
-  sub_inf    = [aws_subnet.capa["inf-a"].id, aws_subnet.capa["inf-b"].id]
-}
-
-# --- Tablas de ruteo -----------------------------------------------------------------
-
-resource "aws_route_table" "public" {
-  vpc_id = aws_vpc.ateneo.id
-  tags   = { Name = "rtb-public" }
-}
-
-resource "aws_route" "public_internet" {
-  route_table_id         = aws_route_table.public.id
-  destination_cidr_block = "0.0.0.0/0"
-  gateway_id             = aws_internet_gateway.ateneo.id
-}
-
-resource "aws_route_table_association" "public" {
-  for_each       = toset(["a", "b"])
-  subnet_id      = aws_subnet.capa["public-${each.key}"].id
-  route_table_id = aws_route_table.public.id
-}
-
-# Dos tablas de aplicación, como deja el asistente (§2.1): la ruta al NAT va en las dos.
-resource "aws_route_table" "app" {
-  for_each = toset(["a", "b"])
-  vpc_id   = aws_vpc.ateneo.id
-  tags     = { Name = "rtb-app-${each.key}" }
-}
-
-resource "aws_route_table_association" "app" {
-  for_each       = toset(["a", "b"])
-  subnet_id      = aws_subnet.capa["app-${each.key}"].id
-  route_table_id = aws_route_table.app[each.key].id
-}
-
-# Tres tablas sin salida (§2.3): la única ruta es 10.0.0.0/16 local (más el endpoint de S3).
-resource "aws_route_table" "cerrada" {
-  for_each = toset(["inf", "data", "eval"])
+resource "aws_route_table" "capa" {
+  for_each = local.subredes
   vpc_id   = aws_vpc.ateneo.id
   tags     = { Name = "rtb-${each.key}" }
 }
 
-resource "aws_route_table_association" "inf" {
-  for_each       = toset(["a", "b"])
-  subnet_id      = aws_subnet.capa["inf-${each.key}"].id
-  route_table_id = aws_route_table.cerrada["inf"].id
+resource "aws_route_table_association" "capa" {
+  for_each       = local.subredes_planas
+  subnet_id      = aws_subnet.capa[each.key].id
+  route_table_id = aws_route_table.capa[each.value.capa].id
 }
 
-resource "aws_route_table_association" "data" {
-  for_each       = toset(["a", "b"])
-  subnet_id      = aws_subnet.capa["data-${each.key}"].id
-  route_table_id = aws_route_table.cerrada["data"].id
+resource "aws_route" "publica_internet" {
+  route_table_id         = aws_route_table.capa["publica"].id
+  destination_cidr_block = "0.0.0.0/0"
+  gateway_id             = aws_internet_gateway.ateneo.id
 }
 
-resource "aws_route_table_association" "eval" {
-  subnet_id      = aws_subnet.eval.id
-  route_table_id = aws_route_table.cerrada["eval"].id
-}
-
-# --- NAT: lo más caro que queda prendido. Existe solo con encendido = true. -----------
-
+# Un solo NAT, y solo la capa de aplicación sale por él (riesgo 03).
 resource "aws_eip" "nat" {
-  count  = var.encendido ? 1 : 0
   domain = "vpc"
   tags   = { Name = "ateneo-nat" }
 }
 
 resource "aws_nat_gateway" "ateneo" {
-  count         = var.encendido ? 1 : 0
-  allocation_id = aws_eip.nat[0].id
-  subnet_id     = aws_subnet.capa["public-a"].id
+  allocation_id = aws_eip.nat.id
+  subnet_id     = aws_subnet.capa["publica-a"].id
   tags          = { Name = "ateneo-nat" }
 
   depends_on = [aws_internet_gateway.ateneo]
 }
 
-resource "aws_route" "app_nat" {
-  for_each               = var.encendido ? toset(["a", "b"]) : toset([])
-  route_table_id         = aws_route_table.app[each.key].id
+resource "aws_route" "aplicacion_nat" {
+  route_table_id         = aws_route_table.capa["aplicacion"].id
   destination_cidr_block = "0.0.0.0/0"
-  nat_gateway_id         = aws_nat_gateway.ateneo[0].id
+  nat_gateway_id         = aws_nat_gateway.ateneo.id
 }
 
 # --- Endpoints ------------------------------------------------------------------------
 
-# Gateway de S3: gratis, y el único camino a S3 de inferencia y evaluación.
+# Gateway de S3: gratis. Datos no lo tiene: RDS no usa S3, y lo que una capa no necesita no lo tiene.
 resource "aws_vpc_endpoint" "s3" {
   vpc_id            = aws_vpc.ateneo.id
   service_name      = "com.amazonaws.${var.region}.s3"
   vpc_endpoint_type = "Gateway"
-  route_table_ids = concat(
-    [for k in ["a", "b"] : aws_route_table.app[k].id],
-    [for k in ["inf", "data", "eval"] : aws_route_table.cerrada[k].id],
-  )
-  tags = { Name = "ateneo-s3" }
+  route_table_ids   = [for capa in ["aplicacion", "inferencia", "evaluacion"] : aws_route_table.capa[capa].id]
+  tags              = { Name = "ateneo-s3" }
 }
 
-# Interfaz de SQS (modo sqs): los workers no tienen internet y tienen que llegar a la cola.
-# Con private DNS, sqs.us-east-1.amazonaws.com resuelve a estas IPs en toda la VPC, así
-# que la capa app también lo usa (y deja de pasar por el NAT para encolar).
-# Cuesta lo mismo que el ALB interno que reemplaza (~USD 0,01/h por zona).
-resource "aws_vpc_endpoint" "sqs" {
-  count               = var.encendido && local.sqs ? 1 : 0
+# Fargate sin internet necesita bajar imágenes (ECR) y escribir logs; worker y evaluador, además,
+# SQS. Con DNS privado, los nombres públicos de estos servicios resuelven a estas IPs en toda la
+# VPC. Van en subredes propias para no entrar a la subred aislada ni atravesar su NACL (decisión 07).
+resource "aws_vpc_endpoint" "interfaz" {
+  for_each = toset(["ecr.api", "ecr.dkr", "logs", "sqs"])
+
   vpc_id              = aws_vpc.ateneo.id
-  service_name        = "com.amazonaws.${var.region}.sqs"
+  service_name        = "com.amazonaws.${var.region}.${each.key}"
   vpc_endpoint_type   = "Interface"
-  subnet_ids          = local.sub_inf
-  security_group_ids  = [aws_security_group.vpce.id]
+  subnet_ids          = local.sub["endpoints"]
+  security_group_ids  = [aws_security_group.g["endpoints"].id]
   private_dns_enabled = true
-  tags                = { Name = "ateneo-sqs" }
+  tags                = { Name = "ateneo-${replace(each.key, ".", "-")}" }
 }
 
-# --- NACL de evaluación (§9.4): la segunda barrera, sin estado ------------------------
+# --- NACL de evaluación: la segunda barrera, sin estado --------------------------------
 
-resource "aws_network_acl" "eval" {
+# Entrada: solo respuestas, por puertos efímeros. Salida: solo 443, que sin ruta a internet llega
+# únicamente a S3 y a los endpoints. Ni el DNS de la VPC ni los metadatos de la tarea pasan por
+# una NACL, así que no hace falta abrirlos.
+resource "aws_network_acl" "evaluacion" {
   vpc_id     = aws_vpc.ateneo.id
-  subnet_ids = [aws_subnet.eval.id]
-  tags       = { Name = "nacl-eval" }
+  subnet_ids = local.sub["evaluacion"]
+  tags       = { Name = "nacl-evaluacion" }
 
-  # Salida: leer S3 por el endpoint y escribir la certificación en la base.
   egress {
     rule_no    = 100
     protocol   = "tcp"
@@ -178,29 +129,12 @@ resource "aws_network_acl" "eval" {
     from_port  = 443
     to_port    = 443
   }
-  egress {
-    rule_no    = 200
-    protocol   = "tcp"
-    action     = "allow"
-    cidr_block = "10.0.20.0/23"
-    from_port  = 5432
-    to_port    = 5432
-  }
 
-  # Entrada: solo las respuestas, por puertos efímeros. Nadie inicia hacia eval-1.
   ingress {
     rule_no    = 100
     protocol   = "tcp"
     action     = "allow"
     cidr_block = "0.0.0.0/0"
-    from_port  = 1024
-    to_port    = 65535
-  }
-  ingress {
-    rule_no    = 200
-    protocol   = "tcp"
-    action     = "allow"
-    cidr_block = "10.0.20.0/23"
     from_port  = 1024
     to_port    = 65535
   }

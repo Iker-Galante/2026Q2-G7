@@ -16,6 +16,7 @@ from app.api import dependencias  # noqa: E402
 from app.dominio.errores import Conflicto, NoAutenticado, NoEncontrado  # noqa: E402
 from app.dominio.modelo import Modelo  # noqa: E402
 from app.dominio.trabajo import Trabajo  # noqa: E402
+from app.dominio.usuario import Usuario  # noqa: E402
 from app.main import crear_app  # noqa: E402
 
 from .fakes import RelojFijo  # noqa: E402
@@ -56,7 +57,7 @@ class VerificadorFalso:
         self.vistos.append(token)
         if token != "bueno":
             raise NoAutenticado("token inválido")
-        return "sub-123"
+        return Usuario("sub-123", ("publicador",))
 
 
 def test_health(cliente):

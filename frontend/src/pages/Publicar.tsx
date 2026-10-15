@@ -88,9 +88,9 @@ export default function Publicar() {
         <p className="lede">
           Subí el <code>.onnx</code> y su contrato. El archivo va del navegador directo al bucket
           con una URL prefirmada, sin pasar por la API; después la API valida el contrato, lo
-          escribe como <code>modelo.json</code> al lado y deja el modelo pendiente. La instancia
-          aislada lo toma en los próximos segundos y lo mide contra el conjunto reservado de su
-          tipo de estudio.
+          escribe como <code>modelo.json</code> al lado y deja el pedido en la cola de evaluaciones.
+          El evaluador, en la subred aislada, arranca solo (si estaba apagado tarda uno o dos
+          minutos) y lo mide contra el conjunto reservado de su tipo de estudio.
         </p>
       </header>
 

@@ -1,4 +1,4 @@
-"""Modo sqs del backend: encolar, reenviar y el adaptador de SQS (con el Stubber de botocore)."""
+"""Las colas del backend: encolar, reenviar y el adaptador de SQS (con el Stubber de botocore)."""
 
 from __future__ import annotations
 
@@ -14,22 +14,12 @@ from app.aplicacion.casos_uso.inferencias import EncolarInferencia, ReenviarPend
 from app.aplicacion.puertos import PeticionInferencia
 from app.config import Settings
 from app.dominio.errores import ServicioNoDisponible
-from app.infraestructura.sqs.cola_inferencias import ColaInferenciasSqs
+from app.infraestructura.sqs.colas import ColaSqs
 
+from .fakes import ColaFalsa
 from .test_casos_uso import mundo  # noqa: F401 — fixture compartida
 
 URL = "https://sqs.us-east-1.amazonaws.com/123456789012/ateneo-inferencias"
-
-
-class ColaFalsa:
-    def __init__(self, caida: bool = False):
-        self.caida = caida
-        self.enviados: list[PeticionInferencia] = []
-
-    def enviar(self, p: PeticionInferencia) -> None:
-        if self.caida:
-            raise ServicioNoDisponible("SQS no contesta")
-        self.enviados.append(p)
 
 
 class SinEnviarMemoria:
@@ -61,12 +51,11 @@ def _encolar(mundo, cola, modelo=None):
     return caso.ejecutar(estudio.id, modelo.id), modelo, estudio
 
 
-def test_encolar_manda_el_mismo_cuerpo_que_recibe_el_worker(mundo):
+def test_encolar_manda_todo_lo_que_necesita_el_worker(mundo):
     cola = ColaFalsa()
     t, modelo, estudio = _encolar(mundo, cola)
     assert t.estado == "pendiente" and len(cola.enviados) == 1
-    cuerpo = cola.enviados[0].como_mensaje()
-    assert cuerpo == {
+    assert cola.enviados[0].como_mensaje() == {
         "trabajo_id": str(t.id),
         "modelo": {"nombre": "torax", "version": "1.0.0", "bucket": "b-modelos", "prefix": modelo.s3_prefix},
         "estudio": {"bucket": "b-estudios", "key": estudio.s3_key},
@@ -95,29 +84,35 @@ def test_reenviar_manda_los_pendientes_viejos_y_vence_los_en_curso(mundo):
     assert mundo.trabajos.obtener(t2.id).estado == "error"
 
 
-def test_adaptador_sqs_envia_json_y_traduce_errores():
+def test_adaptador_sqs_envia_recibe_borra_y_traduce_errores():
     sqs = boto3.client("sqs", region_name="us-east-1", aws_access_key_id="x", aws_secret_access_key="x")
     p = PeticionInferencia(uuid4(), "torax", "1.0.0", "bm", "modelos/torax/1.0.0/", "be", "estudios/a.png")
     with Stubber(sqs) as stub:
         stub.add_response("send_message", {"MessageId": "1", "MD5OfMessageBody": "x"},
                           {"QueueUrl": URL, "MessageBody": json.dumps(p.como_mensaje())})
         stub.add_client_error("send_message", "AWS.SimpleQueueService.NonExistentQueue")
-        cola = ColaInferenciasSqs(sqs, URL)
+        stub.add_response("receive_message", {"Messages": [{"Body": "{}", "ReceiptHandle": "r-1"}]},
+                          {"QueueUrl": URL, "MaxNumberOfMessages": 10, "WaitTimeSeconds": 20})
+        stub.add_response("delete_message", {}, {"QueueUrl": URL, "ReceiptHandle": "r-1"})
+        cola = ColaSqs(sqs, URL)
         cola.enviar(p)
         with pytest.raises(ServicioNoDisponible):
             cola.enviar(p)
+        [m] = cola.recibir(20)
+        assert m.cuerpo == "{}"
+        cola.borrar(m)
 
 
-def test_config_exige_lo_que_pide_cada_modo(monkeypatch):
-    base = {"DATABASE_URL": "postgresql://x", "BUCKET_MODELOS": "m", "BUCKET_ESTUDIOS": "e"}
-    for k, v in base.items():
+def test_config_cada_proceso_exige_su_cola(monkeypatch):
+    for k, v in {"DATABASE_URL": "postgresql://x", "BUCKET_MODELOS": "m", "BUCKET_ESTUDIOS": "e"}.items():
         monkeypatch.setenv(k, v)
-    monkeypatch.delenv("INFERENCIA_URL", raising=False)
-    monkeypatch.setenv("MODO_INFERENCIA", "sqs")
-    with pytest.raises(ValueError, match="COLA_INFERENCIAS_URL"):
+    for k in ("COLA_INFERENCIAS_URL", "COLA_EVALUACIONES_URL", "COLA_RESULTADOS_URL"):
+        monkeypatch.delenv(k, raising=False)
+    with pytest.raises(ValueError, match="cola_inferencias_url"):
         Settings()
     monkeypatch.setenv("COLA_INFERENCIAS_URL", URL)
-    assert Settings().modo_inferencia == "sqs"
-    monkeypatch.setenv("MODO_INFERENCIA", "http")
-    with pytest.raises(ValueError, match="INFERENCIA_URL"):
-        Settings()
+    s = Settings()
+    with pytest.raises(ValueError, match="COLA_EVALUACIONES_URL"):
+        s.exigir("cola_evaluaciones_url")                # la API
+    with pytest.raises(ValueError, match="COLA_RESULTADOS_URL"):
+        s.exigir("cola_resultados_url")                  # el procesador

@@ -3,13 +3,13 @@ from __future__ import annotations
 import logging
 from uuid import UUID
 
-from ...dominio.errores import Conflicto, FalloDefinitivo, NoEncontrado, ServicioNoDisponible
+from ...dominio.errores import Conflicto, NoEncontrado, ServicioNoDisponible
 from ...dominio.estudio import Estudio
 from ...dominio.modelo import Modelo
 from ...dominio.trabajo import Trabajo
 from ..puertos import (
-    AlmacenEstudios, ClienteInferencia, ColaInferencias, PeticionInferencia, Reloj,
-    RepositorioEstudios, RepositorioModelos, RepositorioTrabajos, TrabajosSinEnviar,
+    AlmacenEstudios, ColaInferencias, PeticionInferencia, Reloj, RepositorioEstudios,
+    RepositorioModelos, RepositorioTrabajos, TrabajosSinEnviar,
 )
 
 log = logging.getLogger(__name__)
@@ -26,17 +26,16 @@ def _peticion(trabajo: Trabajo, modelo: Modelo, estudio: Estudio,
 
 
 class EncolarInferencia:
-    """Confirma la subida, valida compatibilidad e inserta el trabajo en `pendiente`.
+    """Confirma la subida, valida compatibilidad, inserta el trabajo en `pendiente` y lo
+    deja en la cola `inferencias`.
 
-    Modo http: no llama al worker; de eso se encarga el despachador.
-    Modo sqs (con `cola`): además deja el pedido en la cola. Si la cola no contesta, el
-    trabajo queda `pendiente` igual y el reenviador lo vuelve a mandar: el usuario no ve
-    un error por una falla que se arregla sola.
+    Si la cola no contesta, el trabajo queda `pendiente` igual y el reenviador del procesador
+    lo vuelve a mandar: el usuario no ve un error por una falla que se arregla sola.
     """
 
     def __init__(self, estudios: RepositorioEstudios, modelos: RepositorioModelos,
                  trabajos: RepositorioTrabajos, almacen: AlmacenEstudios, reloj: Reloj,
-                 cola: ColaInferencias | None = None, bucket_modelos: str = "", bucket_estudios: str = ""):
+                 cola: ColaInferencias, bucket_modelos: str, bucket_estudios: str):
         self._estudios = estudios
         self._modelos = modelos
         self._trabajos = trabajos
@@ -58,11 +57,10 @@ class EncolarInferencia:
         modelo.verificar_compatible(estudio)
         trabajo = Trabajo.nuevo(estudio, modelo, self._reloj.ahora())
         self._trabajos.guardar(trabajo)
-        if self._cola is not None:
-            try:
-                self._cola.enviar(_peticion(trabajo, modelo, estudio, self._bucket_modelos, self._bucket_estudios))
-            except ServicioNoDisponible as e:
-                log.warning("no se pudo encolar trabajo_id=%s; lo reenvía el reenviador: %s", trabajo.id, e)
+        try:
+            self._cola.enviar(_peticion(trabajo, modelo, estudio, self._bucket_modelos, self._bucket_estudios))
+        except ServicioNoDisponible as e:
+            log.warning("no se pudo encolar trabajo_id=%s; lo reenvía el procesador: %s", trabajo.id, e)
         log.info("trabajo encolado trabajo_id=%s modelo=%s estudio=%s", trabajo.id, modelo.nombre, estudio.id)
         return trabajo
 
@@ -75,47 +73,14 @@ class ConsultarTrabajo:
         return self._trabajos.obtener(id)
 
 
-class DespacharTrabajo:
-    """Lleva un trabajo (ya en `en_curso`) al worker y guarda lo que pasó."""
-
-    def __init__(self, estudios: RepositorioEstudios, modelos: RepositorioModelos,
-                 trabajos: RepositorioTrabajos, cliente: ClienteInferencia, reloj: Reloj,
-                 bucket_modelos: str, bucket_estudios: str, max_intentos: int):
-        self._estudios = estudios
-        self._modelos = modelos
-        self._trabajos = trabajos
-        self._cliente = cliente
-        self._reloj = reloj
-        self._bucket_modelos = bucket_modelos
-        self._bucket_estudios = bucket_estudios
-        self._max_intentos = max_intentos
-
-    def ejecutar(self, trabajo: Trabajo) -> None:
-        modelo = self._modelos.obtener(trabajo.modelo_id)
-        estudio = self._estudios.obtener(trabajo.estudio_id)
-        peticion = _peticion(trabajo, modelo, estudio, self._bucket_modelos, self._bucket_estudios)
-        try:
-            resultado = self._cliente.inferir(peticion)
-            trabajo.marcar_ok(resultado, self._reloj.ahora())
-            log.info("trabajo ok trabajo_id=%s worker=%s ms=%s", trabajo.id, resultado.worker_id, resultado.duracion_ms)
-        except ServicioNoDisponible as e:
-            trabajo.marcar_fallido(str(e), self._reloj.ahora(), self._max_intentos)
-            log.warning("trabajo fallido trabajo_id=%s intento=%s estado=%s motivo=%s",
-                        trabajo.id, trabajo.intentos, trabajo.estado, e)
-        except FalloDefinitivo as e:
-            trabajo.marcar_fallido(str(e), self._reloj.ahora(), self._max_intentos, definitivo=True)
-            log.warning("trabajo rechazado trabajo_id=%s motivo=%s", trabajo.id, e)
-        self._trabajos.guardar(trabajo)
-
-
 class ReenviarPendientes:
-    """Modo sqs: la red de seguridad del envío.
+    """La red de seguridad del envío, en el procesador.
 
     Vuelve a mandar a la cola los trabajos que siguen `pendiente` después de `minutos`
     (el envío original falló, o el mensaje se perdió), y da por perdidos los `en_curso` que
     no tienen noticias hace `vencimiento_minutos` (el worker murió en el último intento y el
-    mensaje terminó en la DLQ). Un reenvío de más no hace daño: el worker ignora los trabajos
-    que ya terminaron.
+    mensaje terminó en la DLQ). Un reenvío de más no hace daño: el procesador ignora el
+    resultado de un trabajo que ya terminó.
     """
 
     def __init__(self, sin_enviar: TrabajosSinEnviar, estudios: RepositorioEstudios,
@@ -134,7 +99,7 @@ class ReenviarPendientes:
 
     def ejecutar(self) -> int:
         vencidos = self._sin_enviar.vencer_en_curso(
-            self._vencimiento, "el worker no respondió; el mensaje quedó en la cola de muertos")
+            self._vencimiento, "el worker no respondió; el mensaje quedó en la cola de fallidos")
         if vencidos:
             log.warning("%s trabajos en_curso vencidos pasaron a error", vencidos)
         enviados = 0

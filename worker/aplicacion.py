@@ -2,17 +2,10 @@ from __future__ import annotations
 
 import socket
 import time
-from dataclasses import dataclass
 
-from .puertos import FuenteImagenes, ProveedorModelos, RefModelo, RefObjeto
+from .puertos import FuenteImagenes, ProveedorModelos, RefModelo, RefObjeto, Resultado
 
-
-@dataclass(frozen=True)
-class Resultado:
-    prediccion: str
-    probabilidades: dict[str, float]
-    duracion_ms: int
-    worker: str
+__all__ = ["Inferir", "Resultado"]
 
 
 class Inferir:

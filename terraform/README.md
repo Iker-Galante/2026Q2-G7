@@ -1,212 +1,119 @@
-# Ateneo como código: Terraform + SQS + SNS + Lambda + Cognito
+# Ateneo en AWS 2.0, como código
 
-Toda la arquitectura de la guía «Ateneo paso a paso» (secciones 02 a 10 y 14) declarada en
-Terraform, más las piezas nuevas que la hacen más robusta:
+La arquitectura de «Ateneo en AWS 2.0» (Entrega 3) entera en Terraform: `terraform apply` levanta
+todo en una cuenta limpia del Learner Lab y `terraform destroy` lo borra, imágenes y buckets
+incluidos. Quien lo corre no necesita Docker.
 
-| Pieza nueva | Para qué | Archivo |
-|-------------|----------|---------|
-| **SQS** `ateneo-inferencias` + DLQ | La cola interna de inferencias. Reemplaza a la tabla-cola con `SKIP LOCKED`, al despachador y al barrido de huérfanos | `cola.tf` |
-| **SNS** `ateneo-alertas` + alarmas de CloudWatch | Avisar por mail cuando un trabajo agota sus 3 intentos (DLQ), cuando la cola no avanza o cuando el backend se queda sin instancias sanas | `notificaciones.tf` |
-| **Lambda** `ateneo-guardian` + EventBridge | Red de seguridad del presupuesto: todas las noches apaga lo que haya quedado prendido y avisa por SNS | `guardian.tf`, `lambda/guardian.py` |
-| **Cognito** user pool + Hosted UI | Usuarios y login sin que la contraseña pase por nuestro código | `cognito.tf` |
-| **API Gateway** `ateneo` + **Lambda** `ateneo-callback` | La puerta HTTPS: el `/callback` del login y `/api/*` con el token validado | `api.tf`, `lambda/callback.py` |
-| **S3 sitio estático** (bucket web) | El frontend, servido por S3 y no por las instancias | `s3.tf` |
+| Pieza | Archivo |
+|-------|---------|
+| VPC 10.0.0.0/16: once subredes en seis capas, una tabla de ruteo por capa, un NAT, NACL de evaluación | `red.tf` |
+| Endpoint Gateway de S3 y cuatro de interfaz (`ecr.api`, `ecr.dkr`, `logs`, `sqs`) en subredes propias | `red.tf` |
+| Grupos de seguridad encadenados; procesador, worker, evaluador y constructor sin entrada | `seguridad.tf` |
+| API Gateway (HTTP API, HTTPS) → VPC Link → ALB interno + WAF | `api.tf`, `balanceador.tf` |
+| Cognito: cuatro grupos, Hosted UI, Lambda de post-confirmación, admin inicial | `cognito.tf` |
+| El login de la clase: sitio en S3 y Lambda en `/callback` | `cognito.tf`, `api.tf`, `lambda/` |
+| ECS Fargate: api, procesador, worker, evaluador | `ecs.tf`, `escalado.tf` |
+| ECR y el constructor de imágenes | `imagenes.tf`, `plantillas/constructor.sh.tftpl` |
+| SQS: `inferencias`, `evaluaciones`, `resultados`, cada una con su cola de fallidos | `colas.tf` |
+| RDS PostgreSQL 16 y su URL en Secrets Manager | `datos.tf` |
+| Cinco buckets: web (el sitio), modelos, estudios, evaluación, artefactos | `s3.tf` |
+| EFS como caché de modelos de los workers | `efs.tf` |
+| SNS y alarmas: colas de fallidos y 5xx del ALB | `alertas.tf` |
 
-Y lo que antes era a mano pasa a ser declarativo:
+## Qué hace `terraform apply`
 
-| Antes (guía) | Ahora |
-|--------------|-------|
-| Clics en la consola, §02 a §10 | `terraform apply` |
-| `infra/entorno.sh` con cinco nombres elegidos a mano | Los genera Terraform (`ateneo-<rol>-<sufijo>`); `scripts/entorno-desde-terraform.sh` escribe `entorno.sh` para que `desplegar.sh` siga igual |
-| `infra/generar-env.sh` (tipear la contraseña) | Terraform crea la contraseña, arma los tres `.env` y los sube a `config/` |
-| `infra/userdata.sh` (rellenar huecos) | `templatefile()` con los valores reales, en `plantillas/` |
-| Imagen dorada a mano (§8.2) | `imagen.tf` la construye sola la primera vez |
-| `apagar.sh` / `prender.sh` | `terraform apply -var encendido=false` / `terraform apply` |
-| `eval-1` con `run-instances` | `aws_instance.eval`; se relanza con `-replace` |
+1. Empaqueta el código del repositorio (backend, frontend, worker, evaluador, `ateneo_ml`) y
+   calcula su hash: es la etiqueta de las imágenes.
+2. Crea la red, la base, los buckets, las colas, Cognito y API Gateway; sube el paquete al bucket
+   de artefactos.
+3. Lanza el constructor: una `t3.large` en la capa de aplicación que construye las imágenes
+   `backend` y `ml`, las sube a ECR, sube el sitio al bucket web y, con `datos_demo`, siembra el
+   modelo de la E2 y el conjunto de 200 casos de Hugging Face. Después se apaga.
+4. Espera las imágenes (unos diez minutos la primera vez) y crea los servicios de ECS.
+5. Imprime la dirección del sitio y el admin inicial. La verificación es abrir el sitio y entrar.
 
-Lo que **no** cambia: `infra/desplegar.sh` (subir zips y el build) e `infra/refrescar.sh`
-(reemplazar instancias, porque el lab deniega el instance refresh). La infraestructura sigue
-sin saber qué hay adentro del zip.
+Un cambio de código produce otro hash: Terraform reemplaza el constructor, se construyen imágenes
+nuevas y ECS cambia las tareas de a poco. **Sin cambios, el plan sale vacío.**
 
-## Arquitectura
+## Primer despliegue
 
-```mermaid
-flowchart LR
-  U[Navegador] -->|HTTP| WEB[(S3 sitio)]
-  U -->|login| COG[Cognito Hosted UI]
-  COG -->|/callback| GW
-  GW -.->|canje del código| LCB[Lambda callback]
-  U -->|HTTPS + access token| GW[API Gateway]
-  GW -->|token válido| ALB[alb-ateneo]
-  ALB --> APP[asg-app<br/>backend + sitio]
-  APP -->|POST prefirmado| S3E[(estudios)]
-  APP -->|encola| Q[[SQS ateneo-inferencias]]
-  Q -->|long polling| INF[asg-inf<br/>workers]
-  Q -.->|3 fallos| DLQ[[DLQ]]
-  DLQ -.-> CW[CloudWatch] -.-> SNS((SNS alertas)) -.-> MAIL[mail]
-  INF -->|resultado| RDS[(RDS PostgreSQL)]
-  APP --> RDS
-  INF --> EFS[(EFS modelos)]
-  EVAL[eval-1<br/>subred aislada] --> RDS
-  EVAL -->|endpoint S3| S3V[(evaluación)]
-  EB[EventBridge 03:00] --> L[Lambda guardián] -.-> SNS
-```
-
-En **modo `http`** (el de la guía) el tramo `APP → SQS → INF` es `APP → alb-ateneo-int → INF`.
-El modo se elige con una variable, y el mismo código sirve para los dos:
-
-| | `modo_inferencia = "http"` | `modo_inferencia = "sqs"` (por defecto) |
-|-|-------------------------------------------|---------------------------|
-| Cómo llega un trabajo al worker | Despachador del backend → ALB interno | El backend encola; los workers consumen |
-| Reintentos | Columna `intentos` | `maxReceiveCount = 3` y DLQ |
-| Un worker que muere a mitad | Barrido de huérfanos cada minuto | El mensaje vuelve solo al vencer la visibilidad (90 s) |
-| Escalado de `asg-inf` | CPU 70 % | CPU 70 % **y** mensajes en cola por instancia |
-| Quién escribe el resultado | El backend | El worker (sg-data ya acepta 5432 desde sg-worker) |
-| Costo fijo que agrega | ALB interno ≈ USD 0,55/día | Endpoint de SQS en 2 zonas ≈ USD 0,48/día |
-
-SQS se crea en los dos modos (vacío no cuesta nada), así que se puede pasar de uno a otro sin
-recrear nada más que el ALB interno y el endpoint.
-
-### Por qué así, y por qué no lo demás
-
-- **SQS para la cola interna.** La tabla con `SKIP LOCKED` funciona, pero obliga a resolver a
-  mano lo que SQS ya trae: reintentos con techo, huérfanos y aislamiento de los que fallan
-  siempre. Y desacopla de verdad: si todos los workers están caídos, el backend sigue
-  aceptando trabajos y se procesan cuando vuelven. La tabla `trabajo` sigue siendo la fuente
-  de verdad de lo que ve la pantalla.
-- **Sin ALB interno en modo sqs.** Con consumidores que tiran de la cola no hay nada que
-  balancear. El endpoint de interfaz de SQS cuesta lo mismo y deja a la subred de inferencia
-  sin internet, como estaba.
-- **El evaluador sigue leyendo la tabla `modelo`.** Son pocas evaluaciones por semana, y una
-  cola obligaría a darle a la subred aislada un camino a un endpoint de SQS, que es justo lo
-  que la NACL impide (movimiento lateral, §9.4).
-- **SNS para avisos, no para el flujo.** No hace falta fan-out entre servicios; lo que faltaba
-  era enterarse de las fallas sin entrar a la consola.
-- **Lambda para el presupuesto.** El mayor riesgo del lab no es técnico: es olvidarse algo
-  prendido y quemar los USD 100. El guardián corre sin VPC (no necesita ver nada adentro),
-  con `LabRole`, y lo dispara una regla de EventBridge con permiso basado en recurso, sin rol
-  propio.
-- **Docker queda para desarrollo local.** `docker-compose.yml` ya reproduce la topología. En
-  AWS la imagen dorada + zip cumple el mismo papel (dependencias fijas, código descartable), y
-  pasar a ECS cambiaría el modelo de despliegue entero sin sumar robustez a esta entrega.
-
-## Login con Cognito
-
-El recorrido de la clase, paso por paso, y dónde vive cada uno:
-
-| # | Qué pasa | Dónde |
-|---|----------|-------|
-| 1 | El usuario abre el sitio en S3, por HTTP | `s3.tf` (bucket web como sitio estático) |
-| 2 | «Ingresar» redirige al Hosted UI de Cognito con un `state` al azar | `frontend/src/api/sesion.ts` → `ingresar()` |
-| 3 | Cognito vuelve a `GET /callback` de API Gateway, que es HTTPS | `cognito.tf` (`callback_urls`), `api.tf` |
-| 4 | La Lambda canjea el código por los tokens en `/oauth2/token` (con el secreto del cliente) y redirige a `http://<sitio>/#access_token=…&id_token=…` | `lambda/callback.py` |
-| 5 | El sitio lee los tokens del fragmento, comprueba el `state`, los guarda en `localStorage` y limpia la URL | `sesion.ts` → `recibirDelCallback()` |
-| 6 | Cada pedido lleva `Authorization: Bearer <access token>`. API Gateway lo valida (autorizador JWT) y el backend lo vuelve a validar | `frontend/src/api/cliente.ts`, `api.tf`, `backend/app/infraestructura/cognito/` |
-
-- **Por qué el callback no va directo al sitio.** Cognito solo acepta callbacks HTTPS (salvo
-  `localhost`), y el sitio de S3 es HTTP: sin CloudFront ni dominio propio no hay forma de
-  ponerle un certificado. API Gateway sí trae uno. Además, en una página HTTP el navegador no
-  expone `crypto.subtle`, así que el sitio tampoco podría hacer PKCE por su cuenta.
-- **Por qué la API también pasa por API Gateway.** Así el token viaja siempre por HTTPS desde el
-  navegador y un pedido sin token válido no llega al backend. El ALB sigue siendo público (el
-  tramo API Gateway → ALB es HTTP), por eso el backend valida el token otra vez con las claves
-  públicas del user pool. `/api/health` es la única ruta sin token.
-- **Qué guarda el navegador.** Access e id token, una hora. No hay refresh token en la URL: al
-  vencer, «Ingresar» vuelve a pasar por Cognito, que recuerda la sesión y no pide la contraseña.
-- **El sitio no tiene direcciones escritas.** Terraform deja `config.json` en el bucket web
-  (API Gateway, dominio de Cognito, cliente). En local no existe, y el sitio anda como antes:
-  API en el mismo origen y sin login.
-- **Cuentas.** Cualquiera se registra desde el Hosted UI con su email (Cognito manda el código de
-  verificación; con su remitente, hasta 50 mails por día). Para crear uno a mano:
-  `aws cognito-idp admin-create-user --user-pool-id $(bash terraform/scripts/tf.sh output -raw cognito_user_pool) --username vos@mail.com`.
-
-## Restricciones del Learner Lab que este código respeta
-
-- **No crea roles ni usuarios de IAM.** Las instancias usan `LabInstanceProfile`, la Lambda
-  usa `LabRole` (los dos se leen con `data`).
-- **Sin `instance_refresh`** en los grupos (lo bloquea la SCP): se sigue usando `refrescar.sh`.
-- **Sin CloudFront ni EC2 Instance Connect Endpoint** (no concedidos). Por eso el sitio es HTTP
-  y el HTTPS lo pone API Gateway (ver «Login con Cognito»).
-- **La Lambda del callback usa `LabRole`**, como el guardián, y API Gateway la invoca con un
-  permiso basado en recurso.
-- **Credenciales de sesión:** se corre desde CloudShell, donde ya están puestas. No hay ninguna
-  clave en el código ni en las variables.
-- **El giga de CloudShell:** el proveedor de AWS ocupa unos 850 MB; `scripts/tf.sh` lo deja en
-  `/tmp` y solo el binario de Terraform (90 MB) queda en `$HOME`.
-- **`us-east-1`** y tipos de instancia variables (`tipo_worker = "m5.large"` si `c5.large` no
-  está permitido).
-
-## Primer despliegue (cuenta limpia)
-
-Si ya tenés la arquitectura armada a mano, primero bajala (o usá otra cuenta): este código crea
-todo desde cero con los mismos nombres (`asg-app`, `ateneo-db`, `alb-ateneo`…) y chocaría.
-
-Todo en CloudShell, parado en el clon:
+En CloudShell, parado en el clon:
 
 ```bash
-cd ~/ateneo && git pull
-bash terraform/scripts/bootstrap-estado.sh            # una sola vez: bucket del estado + backend.hcl
+git clone https://github.com/nnicokim/TP-AWS.git ~/ateneo && cd ~/ateneo && git checkout entrega3
+bash terraform/scripts/bootstrap-estado.sh            # una vez por cuenta: bucket del estado + backend.hcl
 cp terraform/terraform.tfvars.example terraform/terraform.tfvars
-nano terraform/terraform.tfvars                       # tu mail para las alertas; lo demás puede quedar
-
-# 1. Primero solo los buckets, para poder subir el código antes de que nazcan las instancias
-bash terraform/scripts/tf.sh apply -target='aws_s3_bucket.b'
-bash terraform/scripts/entorno-desde-terraform.sh     # escribe infra/entorno.sh
-bash infra/desplegar.sh todo                          # backend, worker y frontend a S3
-
-# 2. Todo lo demás (la base tarda 5-10 min; la imagen dorada, otros 5-10)
+nano terraform/terraform.tfvars                       # email_admin y email_alertas
 bash terraform/scripts/tf.sh apply
 bash terraform/scripts/tf.sh output url
 ```
 
-`url` es el sitio en S3. Abrilo, apretá «Ingresar» y creá una cuenta en el Hosted UI de Cognito.
+Después:
 
-Después, igual que la guía §15: aplicar `migraciones/001_inicial.sql` desde una instancia app
-por Session Manager, subir el modelo y el conjunto reservado, y apretar «Publicar». Si pusiste
-un mail, AWS te manda una confirmación de SNS que hay que aceptar.
+1. Abrí `url`. El admin entra con la contraseña temporal que le mandó Cognito; cualquiera puede
+   crear una cuenta de institución o de publicador desde «Ingresar».
+2. En `/publicar`, «En el bucket» ya tiene el modelo de demostración: **Publicar**. El evaluador
+   arranca solo (de 0 a 1 tarea; uno o dos minutos la primera vez) y lo mide contra el conjunto.
+3. En `/consulta`, elegí el modelo y subí una radiografía.
 
-**Si ya tenías el entorno levantado sin Cognito:** un `apply` crea el login y escribe el
-`backend.env` con el user pool, pero las instancias leen el `.env` solo al arrancar:
-`bash infra/refrescar.sh asg-app` para que el backend empiece a pedir el token.
+Si pusiste `email_alertas`, AWS manda una confirmación de SNS que hay que aceptar una vez.
+
+**La regla de uso: se destruye al terminar cada sesión de trabajo** (`tf.sh destroy`). Prendido
+cuesta unos USD 7 por día; una sesión de tres horas, alrededor de un dólar.
+
+## Login con Cognito
+
+El recorrido de la clase, paso por paso. No es el PKCE de la decisión 08 del HTML: la cátedra pide
+este, con el sitio en S3 (cambia también la decisión 11).
+
+| # | Qué pasa | Dónde |
+|---|----------|-------|
+| 1 | El usuario abre el sitio en S3, por HTTP | `s3.tf` (bucket web como sitio estático) |
+| 2 | «Ingresar» (o «crear cuenta») redirige al Hosted UI de Cognito con un `state` al azar | `frontend/src/api/sesion.ts` |
+| 3 | Cognito vuelve a `GET /callback` de API Gateway, que es HTTPS | `cognito.tf` (`callback_urls`), `api.tf` |
+| 4 | La Lambda canjea el código por los tokens (con el secreto del cliente) y redirige a `http://<sitio>/#access_token=…&id_token=…` | `lambda/callback.py` |
+| 5 | El sitio lee los tokens del fragmento, comprueba el `state`, los guarda en `localStorage` y limpia la URL | `sesion.ts` → `recibirDelCallback()` |
+| 6 | Cada pedido lleva `Authorization: Bearer <access token>`: API Gateway lo valida y el backend también, y lee los grupos | `frontend/src/api/cliente.ts`, `api.tf`, `backend/app/infraestructura/cognito/` |
+
+- **Por qué el callback no va directo al sitio.** Cognito solo acepta callbacks HTTPS (salvo
+  `localhost`), y el sitio de S3 es HTTP: sin CloudFront ni dominio propio no hay certificado.
+- **Registro.** Hay un cliente de Cognito por tipo de cuenta (institución, publicador). El sitio
+  pone el tipo al principio del `state` para que la Lambda sepa con qué secreto canjear, y la
+  Lambda de post-confirmación ve por qué cliente se registró el usuario y lo pone en su grupo
+  (`admin_institucion` o `publicador`). Médicos e integrantes llegan por invitación
+  (`aws cognito-idp admin-create-user`); los admins, con `email_admin`.
+- **Qué guarda el navegador.** Access e id token, una hora. Sin refresh token en la URL: al
+  vencer, «Ingresar» vuelve a pasar por Cognito, que recuerda la sesión y no pide la contraseña.
+
+## Restricciones del Learner Lab que este código respeta
+
+- **No crea roles de IAM.** Tareas de ECS, Lambdas y constructor usan `LabRole` o
+  `LabInstanceProfile` (se leen con `data`).
+- **Sin CloudFront ni dominio propio.** El HTTPS lo pone API Gateway; el sitio es HTTP.
+- **RDS sin Multi-AZ**, solo `us-east-1`, sin instance refresh (ya no hay grupos de EC2).
+- **Credenciales de sesión:** se corre desde CloudShell. `scripts/tf.sh` deja el proveedor de AWS
+  en `/tmp` para no llenar el giga de `$HOME`.
+
+### Lo que todavía no se probó en un Learner Lab (sección 12 del HTML)
+
+| Qué verificar | Si el lab no lo permite |
+|---------------|-------------------------|
+| VPC Link de HTTP API hacia un ALB interno | ALB público que solo acepte un encabezado secreto que agrega API Gateway |
+| Servicios de Fargate (rol vinculado de ECS) y el escalado de Application Auto Scaling | Las mismas imágenes sobre EC2 con Auto Scaling |
+| Cuota de vCPU de Fargate (todo escalado son 8,5 vCPU) | Bajar tamaños y máximos en `ecs.tf` |
+| WAF asociado a un ALB | `waf_activo = false` |
+| Disparador Lambda de Cognito | El backend asigna el grupo en la primera llamada |
+| Push a ECR desde EC2 con `LabInstanceProfile` | Construir con Docker en la máquina de quien corre Terraform |
+| Bucket web público (bloqueo de acceso público a nivel de cuenta) | Servir el sitio desde la api, detrás de API Gateway |
 
 ## Un equipo de varias personas
 
-Los nombres de bucket son únicos en todo AWS, pero nadie los elige a mano: Terraform les pone
-un sufijo al azar (`ateneo-modelos-k3x9qz`) la primera vez y lo guarda en el estado. Cada
-Learner Lab es una cuenta de AWS distinta, así que:
+Los buckets y el dominio de Cognito llevan un sufijo al azar que queda en el estado, así que cada
+integrante puede levantar su propio entorno en su lab sin choques. Lo que se comparte es el
+repositorio: `terraform.tfvars` y `backend.hcl` son de cada uno y no se commitean.
 
-- **Cada integrante puede levantar su propio entorno** en su lab con los mismos comandos. El
-  bucket del estado lleva el número de cuenta (`ateneo-tfstate-<cuenta>`) y los cinco de la
-  aplicación su sufijo: no chocan nunca. Los demás nombres (`asg-app`, `ateneo-db`…) son por
-  cuenta, como en la guía.
-- **Lo que se comparte es el repositorio**, no la infraestructura. `terraform.tfvars`,
-  `backend.hcl` e `infra/entorno.sh` son de cada uno y no se commitean (`.gitignore`).
-- **El entorno de la demo vive en un solo lab.** El de otra persona no se puede administrar
-  desde tu cuenta: para trabajar sobre el mismo entorno, lo opera quien es dueño de ese lab.
-- Si querés nombres reconocibles, cada uno pone su propio `sufijo` en `terraform.tfvars`
-  (por ejemplo `sufijo = "iker"`). Tiene que ser distinto entre personas.
-
-## El día a día
-
-| Qué | Comando |
-|-----|---------|
-| Antes de End Lab | `bash terraform/scripts/tf.sh apply -var encendido=false` |
-| Al volver | `bash terraform/scripts/tf.sh apply` |
-| Cambió el backend | `bash infra/desplegar.sh backend` · `bash infra/refrescar.sh asg-app` |
-| Cambió el frontend | `bash infra/desplegar.sh frontend` (sin refrescar: lo sirve S3) |
-| Cambió el worker o `ateneo_ml` | `bash infra/desplegar.sh worker` · `bash infra/refrescar.sh asg-inf` · `bash terraform/scripts/tf.sh apply -replace='aws_instance.eval[0]'` |
-| Ver qué cambiaría | `bash terraform/scripts/tf.sh plan` |
-| Fin del curso | `permitir_borrar_buckets = true` en tfvars · `apply` · `destroy` |
-
-`encendido = false` borra el NAT y los dos balanceadores, pone los grupos en 0, termina
-`eval-1` y detiene la base. El sitio, Cognito y la Lambda del callback quedan (no cuestan nada
-quietos); API Gateway pierde las rutas `/api/*`. Al prender, el ALB nace con otro DNS: Terraform
-vuelve a apuntar API Gateway al nuevo. La dirección del sitio y la de API Gateway no cambian. **Cada `apply` sin
-`-var encendido=false` prende todo**, así que el comando de apagar es el único que lleva la
-variable.
-
-Si te olvidás, el guardián hace lo mismo a las 03:00 (hora argentina) y te manda un mail con lo
-que apagó. AWS vuelve a prender la base sola a los 7 días; el guardián la detiene esa noche.
+El hash del código se calcula sobre los archivos tal como están en disco: un clon de Windows con
+finales de línea CRLF da otro hash que uno de Linux. Corré Terraform siempre desde CloudShell.
 
 ## Pruebas sin cuenta
 
@@ -214,34 +121,5 @@ que apagó. AWS vuelve a prender la base sola a los 7 días; el guardián la det
 cd terraform
 terraform init -backend=false
 terraform validate
-terraform test          # 5 planes contra un AWS simulado: modo http, modo sqs, login, apagado, imagen
+terraform test          # la arquitectura del HTML contra un AWS simulado: red, cómputo, login, variables
 ```
-
-## Cómo funciona el modo sqs en el código
-
-Se elige con `MODO_INFERENCIA` en los `.env` (Terraform los escribe). Sin esa variable todo
-anda como antes, así que el `docker-compose.yml` local sigue en modo http sin tocarlo.
-
-**Backend**
-- `EncolarInferencia` guarda el trabajo `pendiente` y lo manda a la cola con
-  `ColaInferenciasSqs` (`backend/app/infraestructura/sqs/`). El cuerpo es el mismo JSON que
-  recibe `POST /inferir` (`PeticionInferencia.como_mensaje()`). Si SQS no contesta, el usuario
-  no ve un error: el trabajo queda `pendiente`.
-- El despachador se reemplaza por el `Reenviador` (`aplicacion/reenviador.py`): cada minuto
-  vuelve a encolar los `pendiente` de más de `REENVIO_MINUTOS` (5) y pasa a `error` los
-  `en_curso` sin noticias hace `VENCIMIENTO_EN_CURSO_MINUTOS` (10), que son los que terminaron
-  en la DLQ porque el worker murió en el último intento.
-
-**Worker** (`worker/consumidor.py`)
-- Un hilo hace long polling a la cola (de a un mensaje), mientras `/health` sigue contestando.
-- Por cada mensaje: toma el trabajo en la base (`en_curso`, `intentos + 1`), infiere, guarda
-  el resultado y **recién entonces** borra el mensaje. Si el trabajo ya estaba terminado (SQS
-  entrega *al menos* una vez), lo descarta sin inferir.
-- Error definitivo (imagen ilegible, modelo incompatible, objeto inexistente): `error` y se
-  borra. Error transitorio: vuelve a `pendiente` y el mensaje reaparece a los 10 s. En la
-  tercera recepción se marca `error` y el mensaje se deja: SQS lo pasa a la DLQ y la alarma
-  avisa por mail.
-- Escribe en la base con una conexión propia de `psycopg` (ya está en la imagen dorada).
-
-**Pruebas:** `backend/tests/test_sqs.py` y `tests/test_consumidor.py`, con fakes y con el
-`Stubber` de botocore. La suite completa da 65 tests en verde.

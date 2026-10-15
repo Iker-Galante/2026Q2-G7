@@ -12,8 +12,9 @@ from typing import Any, Protocol
 from uuid import UUID
 
 from ..dominio.estudio import Estudio, ObjetoAlmacenado
-from ..dominio.modelo import Modelo
+from ..dominio.modelo import Modelo, ResultadoEvaluacion
 from ..dominio.trabajo import ResultadoInferencia, Trabajo
+from ..dominio.usuario import Usuario
 
 
 # ---- valores que cruzan los puertos -------------------------------------------------
@@ -42,12 +43,38 @@ class PeticionInferencia:
     estudio_key: str
 
     def como_mensaje(self) -> dict[str, Any]:
-        """El cuerpo que recibe el worker: por HTTP en /inferir o como mensaje de SQS."""
+        """El cuerpo del mensaje de la cola `inferencias`: todo lo que el worker necesita."""
         return {
             "trabajo_id": str(self.trabajo_id),
             "modelo": {"nombre": self.modelo_nombre, "version": self.modelo_version,
                        "bucket": self.modelo_bucket, "prefix": self.modelo_prefix},
             "estudio": {"bucket": self.estudio_bucket, "key": self.estudio_key},
+        }
+
+
+@dataclass(frozen=True)
+class PeticionEvaluacion:
+    modelo_id: UUID
+    nombre: str
+    version: str
+    tipo_estudio: str
+    prefix: str
+    etiquetas: list[str]
+
+    @staticmethod
+    def de(m: Modelo) -> "PeticionEvaluacion":
+        return PeticionEvaluacion(m.id, m.nombre, m.version, m.tipo_estudio, m.s3_prefix, list(m.etiquetas))
+
+    def como_mensaje(self) -> dict[str, Any]:
+        """El cuerpo del mensaje de la cola `evaluaciones`. El evaluador no tiene base: viaja todo."""
+        return {
+            "tipo": "evaluar_modelo",
+            "modelo_id": str(self.modelo_id),
+            "nombre": self.nombre,
+            "version": self.version,
+            "tipo_estudio": self.tipo_estudio,
+            "prefix": self.prefix,
+            "etiquetas": self.etiquetas,
         }
 
 
@@ -70,16 +97,26 @@ class RepositorioTrabajos(Protocol):
     def obtener(self, id: UUID) -> Trabajo: ...                     # NoEncontrado
 
 
-class ColaTrabajos(Protocol):
-    """La usa solo el despachador."""
-    def tomar_pendiente(self, max_intentos: int) -> Trabajo | None: ...   # atómico: pendiente → en_curso, intentos + 1
-    def reencolar_huerfanos(self, minutos: int) -> int: ...
-
-
 class TrabajosSinEnviar(Protocol):
-    """Modo sqs: la usa solo el reenviador."""
+    """La usa solo el reenviador del procesador."""
     def tomar_para_reenviar(self, minutos: int, limite: int) -> list[Trabajo]: ...  # pendientes viejos; toca `actualizado`
     def vencer_en_curso(self, minutos: int, motivo: str) -> int: ...                # en_curso sin noticias → error
+
+
+class EvaluacionesSinNoticias(Protocol):
+    """Modelos en_curso de un evaluador que murió en el último intento (el mensaje quedó en la DLQ)."""
+    def vencer_en_curso(self, minutos: int, motivo: str) -> int: ...
+
+
+class RegistroResultados(Protocol):
+    """Lo que escribe el procesador. Cada método aplica solo si el registro sigue sin terminar
+    (pendiente o en_curso), así que un mensaje repetido no cambia nada. Devuelve si aplicó."""
+    def inferencia_en_curso(self, trabajo_id: UUID, worker: str, intento: int) -> bool: ...
+    def inferencia_terminada(self, trabajo_id: UUID, r: ResultadoInferencia) -> bool: ...
+    def inferencia_fallida(self, trabajo_id: UUID, motivo: str) -> bool: ...
+    def evaluacion_en_curso(self, modelo_id: UUID, evaluador: str) -> bool: ...
+    def evaluacion_terminada(self, modelo_id: UUID, r: ResultadoEvaluacion) -> bool: ...
+    def evaluacion_fallida(self, modelo_id: UUID, evaluador: str, motivo: str) -> bool: ...
 
 
 # ---- almacenamiento -----------------------------------------------------------------
@@ -102,13 +139,14 @@ class CatalogoModelosEnBucket(Protocol):
 
 # ---- servicios ----------------------------------------------------------------------
 
-class ClienteInferencia(Protocol):
-    def inferir(self, p: PeticionInferencia) -> ResultadoInferencia: ...  # ServicioNoDisponible | FalloDefinitivo
-
-
 class ColaInferencias(Protocol):
-    """Modo sqs: deja el pedido para que lo tome algún worker."""
+    """Deja el pedido para que lo tome algún worker."""
     def enviar(self, p: PeticionInferencia) -> None: ...                  # ServicioNoDisponible
+
+
+class ColaEvaluaciones(Protocol):
+    """Deja el pedido para el evaluador, que arranca solo si estaba apagado."""
+    def enviar(self, p: PeticionEvaluacion) -> None: ...                  # ServicioNoDisponible
 
 
 class Reloj(Protocol):
@@ -116,4 +154,4 @@ class Reloj(Protocol):
 
 
 class VerificadorTokens(Protocol):
-    def verificar(self, token: str) -> str: ...     # el sub del usuario · NoAutenticado | ServicioNoDisponible
+    def verificar(self, token: str) -> Usuario: ...     # NoAutenticado | ServicioNoDisponible

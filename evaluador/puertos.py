@@ -40,11 +40,24 @@ class ResultadoEvaluacion:
     terminado: datetime
 
 
-class ColaModelos(Protocol):
-    def reencolar_en_curso(self) -> int: ...
-    def tomar_pendiente(self) -> ModeloPendiente | None: ...
+class ResultadosEvaluacion(Protocol):
+    """La cola `resultados`. El evaluador no tiene credenciales de base: publica, y el
+    procesador escribe. Solo salen métricas agregadas, nunca el resultado caso por caso."""
+    def en_curso(self, modelo: ModeloPendiente) -> None: ...
     def terminar_ok(self, modelo: ModeloPendiente, r: ResultadoEvaluacion) -> None: ...
     def terminar_error(self, modelo: ModeloPendiente, motivo: str) -> None: ...
+
+
+@dataclass(frozen=True)
+class Mensaje:
+    cuerpo: str
+    recibo: str
+
+
+class ColaEvaluaciones(Protocol):
+    def recibir(self, espera_s: int) -> Mensaje | None: ...
+    def borrar(self, m: Mensaje) -> None: ...
+    def extender(self, m: Mensaje, segundos: int) -> None: ...   # sigue invisible mientras se evalúa
 
 
 class LectorConjunto(Protocol):

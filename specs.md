@@ -6,6 +6,11 @@
 > aislada → dataset reservado → métricas en la base)— con un modelo ONNX bajado de internet que
 > subimos a mano a S3, y un dataset público que hace de "conjunto reservado".
 
+> **Entrega 3 (rama `entrega3`).** Lo que cambia es el transporte, no el producto: la tabla
+> `trabajo` deja de ser la cola (D4, D5) y los pedidos viajan por SQS (`inferencias`,
+> `evaluaciones`); worker y evaluador ya no escriben en la base ni se los llama por HTTP, y un
+> procesador aplica los resultados (D6). Hay login con Cognito. Ver [architecture.md](architecture.md).
+
 Documentos relacionados: [architecture.md](architecture.md) (diseño de la aplicación) ·
 `ateneo-en-aws.html` y `ateneo-paso-a-paso.html` (infraestructura, fuera del repo por ahora).
 

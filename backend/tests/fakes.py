@@ -6,11 +6,11 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
 
-from app.aplicacion.puertos import PeticionInferencia, RefModeloEnBucket, SubidaFirmada
+from app.aplicacion.puertos import RefModeloEnBucket, SubidaFirmada
 from app.dominio.errores import NoEncontrado, ServicioNoDisponible
 from app.dominio.estudio import Estudio, ObjetoAlmacenado
 from app.dominio.modelo import Modelo
-from app.dominio.trabajo import ResultadoInferencia, Trabajo
+from app.dominio.trabajo import Trabajo
 
 
 class RelojFijo:
@@ -57,8 +57,6 @@ class RepoEstudiosMemoria:
 
 
 class RepoTrabajosMemoria:
-    """Repositorio y cola, como el de Postgres."""
-
     def __init__(self):
         self.datos: dict[UUID, Trabajo] = {}
 
@@ -69,18 +67,6 @@ class RepoTrabajosMemoria:
         if id not in self.datos:
             raise NoEncontrado(f"no existe el trabajo {id}")
         return self.datos[id]
-
-    def tomar_pendiente(self, max_intentos: int) -> Trabajo | None:
-        candidatos = sorted((t for t in self.datos.values() if t.estado == "pendiente" and t.intentos < max_intentos),
-                            key=lambda t: t.actualizado)
-        if not candidatos:
-            return None
-        t = candidatos[0]
-        t.estado, t.intentos = "en_curso", t.intentos + 1
-        return t
-
-    def reencolar_huerfanos(self, minutos: int) -> int:
-        return 0
 
 
 class AlmacenMemoria:
@@ -132,15 +118,14 @@ class CatalogoMemoria:
         self.contratos[prefix] = contrato
 
 
-class ClienteInferenciaFalso:
-    def __init__(self, fallos_antes_de_responder: int = 0, error=ServicioNoDisponible("worker caído")):
-        self.fallos = fallos_antes_de_responder
-        self.error = error
-        self.peticiones: list[PeticionInferencia] = []
+class ColaFalsa:
+    """ColaInferencias y ColaEvaluaciones: guarda lo enviado, o falla como SQS caído."""
 
-    def inferir(self, p: PeticionInferencia) -> ResultadoInferencia:
-        self.peticiones.append(p)
-        if self.fallos > 0:
-            self.fallos -= 1
-            raise self.error
-        return ResultadoInferencia("PNEUMONIA", {"NORMAL": 0.1, "PNEUMONIA": 0.9}, "worker-1", 120)
+    def __init__(self, caida: bool = False):
+        self.caida = caida
+        self.enviados: list[Any] = []
+
+    def enviar(self, p) -> None:
+        if self.caida:
+            raise ServicioNoDisponible("SQS no contesta")
+        self.enviados.append(p)

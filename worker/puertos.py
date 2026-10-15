@@ -20,6 +20,14 @@ class RefObjeto:
     key: str
 
 
+@dataclass(frozen=True)
+class Resultado:
+    prediccion: str
+    probabilidades: dict[str, float]
+    duracion_ms: int
+    worker: str
+
+
 class ProveedorModelos(Protocol):
     def obtener(self, ref: RefModelo) -> Inferidor: ...       # NoEncontrado | ModeloIncompatible
 
@@ -32,11 +40,11 @@ class NoEncontrado(Exception):
     pass
 
 
-# ---- modo sqs -----------------------------------------------------------------------
+# ---- colas --------------------------------------------------------------------------
 
 @dataclass(frozen=True)
 class Mensaje:
-    cuerpo: str              # el mismo JSON que recibe POST /inferir
+    cuerpo: str              # el JSON que deja la API: trabajo_id, modelo y estudio
     recibo: str              # para borrarlo o devolverlo a la cola
     recepciones: int         # ApproximateReceiveCount: 1 la primera vez
 
@@ -47,11 +55,10 @@ class ColaInferencias(Protocol):
     def devolver(self, m: Mensaje, en_s: int) -> None: ...   # visible de nuevo en en_s segundos
 
 
-class ResultadosTrabajos(Protocol):
-    """Lo único que el worker escribe en la base: el estado de su trabajo. Todo idempotente:
-    SQS entrega al menos una vez, así que el mismo trabajo puede llegar dos veces."""
-    def tomar(self, trabajo_id: str, worker: str) -> bool: ...      # False si ya terminó o no existe
-    def terminar_ok(self, trabajo_id: str, worker: str, prediccion: str,
-                    probabilidades: dict[str, float], duracion_ms: int) -> None: ...
-    def terminar_error(self, trabajo_id: str, motivo: str) -> None: ...
-    def reintentar(self, trabajo_id: str, motivo: str) -> None: ...  # vuelve a pendiente
+class ResultadosInferencia(Protocol):
+    """La cola `resultados`. El worker no tiene base ni credenciales: publica, y el procesador
+    escribe. SQS entrega al menos una vez, así que lo mismo puede llegar dos veces; el
+    procesador lo aplica una sola."""
+    def en_curso(self, trabajo_id: str, worker: str, intento: int) -> None: ...
+    def ok(self, trabajo_id: str, r: Resultado) -> None: ...
+    def error(self, trabajo_id: str, motivo: str) -> None: ...

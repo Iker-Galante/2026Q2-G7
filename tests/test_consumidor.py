@@ -1,4 +1,4 @@
-"""El consumidor de SQS del worker, con fakes: sin SQS, sin Postgres, sin modelo."""
+"""El consumidor del worker, con fakes: sin SQS, sin modelo. El worker no tiene base: publica."""
 
 from __future__ import annotations
 
@@ -38,23 +38,19 @@ class ColaFalsa:
 
 
 class ResultadosFalsos:
-    def __init__(self, estado="pendiente"):
-        self.estado, self.error, self.resultado = estado, None, None
+    """La cola `resultados`: guarda lo publicado, en orden."""
 
-    def tomar(self, trabajo_id, worker):
-        if self.estado not in ("pendiente", "en_curso"):
-            return False
-        self.estado = "en_curso"
-        return True
+    def __init__(self):
+        self.publicados = []
 
-    def terminar_ok(self, trabajo_id, worker, prediccion, probabilidades, duracion_ms):
-        self.estado, self.resultado = "ok", (prediccion, worker)
+    def en_curso(self, trabajo_id, worker, intento):
+        self.publicados.append(("en_curso", intento))
 
-    def terminar_error(self, trabajo_id, motivo):
-        self.estado, self.error = "error", motivo
+    def ok(self, trabajo_id, r):
+        self.publicados.append(("ok", r.prediccion))
 
-    def reintentar(self, trabajo_id, motivo):
-        self.estado, self.error = "pendiente", motivo
+    def error(self, trabajo_id, motivo):
+        self.publicados.append(("error", motivo))
 
 
 def _procesar(inferir, resultados, recepciones=1, cuerpo=CUERPO):
@@ -64,40 +60,35 @@ def _procesar(inferir, resultados, recepciones=1, cuerpo=CUERPO):
     return cola
 
 
-def test_ok_guarda_el_resultado_y_recien_entonces_borra():
+def test_ok_publica_el_resultado_y_recien_entonces_borra():
     r = ResultadosFalsos()
     cola = _procesar(InferirFalso(), r)
-    assert r.estado == "ok" and r.resultado == ("PNEUMONIA", "worker-1")
+    assert r.publicados == [("en_curso", 1), ("ok", "PNEUMONIA")]
     assert cola.borrados == ["r-1"]
 
 
-def test_mensaje_repetido_de_un_trabajo_terminado_no_infiere():
-    inferir, r = InferirFalso(), ResultadosFalsos(estado="ok")
-    cola = _procesar(inferir, r)
-    assert inferir.llamadas == 0 and cola.borrados == ["r-1"]
-
-
-def test_error_definitivo_marca_error_y_borra():
+def test_error_definitivo_publica_el_error_y_borra():
     r = ResultadosFalsos()
     cola = _procesar(InferirFalso(ImagenIlegible("no es una imagen")), r)
-    assert r.estado == "error" and "ImagenIlegible" in r.error
+    assert r.publicados[-1][0] == "error" and "ImagenIlegible" in r.publicados[-1][1]
     assert cola.borrados == ["r-1"]
 
 
-def test_error_transitorio_vuelve_a_pendiente_y_a_la_cola():
+def test_error_transitorio_devuelve_el_mensaje_sin_publicar_un_final():
     r = ResultadosFalsos()
-    cola = _procesar(InferirFalso(TimeoutError("S3 lento")), r)
-    assert r.estado == "pendiente" and cola.devueltos == [("r-1", 10)] and cola.borrados == []
+    cola = _procesar(InferirFalso(TimeoutError("S3 lento")), r, recepciones=2)
+    assert r.publicados == [("en_curso", 2)]
+    assert cola.devueltos == [("r-1", 10)] and cola.borrados == []
 
 
-def test_tercer_intento_marca_error_y_deja_el_mensaje_para_la_dlq():
+def test_tercer_intento_publica_el_error_y_deja_el_mensaje_para_la_dlq():
     r = ResultadosFalsos()
     cola = _procesar(InferirFalso(TimeoutError("S3 lento")), r, recepciones=3)
-    assert r.estado == "error" and "tras 3 intentos" in r.error
+    assert r.publicados[-1][0] == "error" and "tras 3 intentos" in r.publicados[-1][1]
     assert cola.borrados == [] and cola.devueltos == []
 
 
-def test_mensaje_ilegible_se_descarta():
+def test_mensaje_ilegible_se_descarta_sin_publicar():
     r = ResultadosFalsos()
     cola = _procesar(InferirFalso(), r, cuerpo="no es json")
-    assert cola.borrados == ["r-1"] and r.estado == "pendiente"
+    assert cola.borrados == ["r-1"] and r.publicados == []

@@ -1,13 +1,19 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
 from ...dominio.contrato import ContratoInvalido, ContratoModelo
-from ...dominio.errores import Conflicto, EntradaInvalida
+from ...dominio.errores import Conflicto, EntradaInvalida, ServicioNoDisponible
 from ...dominio.modelo import Modelo
-from ..puertos import CatalogoModelosEnBucket, Reloj, RepositorioModelos, SubidaFirmada
+from ..puertos import (
+    CatalogoModelosEnBucket, ColaEvaluaciones, EvaluacionesSinNoticias, PeticionEvaluacion, Reloj,
+    RepositorioModelos, SubidaFirmada,
+)
+
+log = logging.getLogger(__name__)
 
 
 def prefijo_de(prefijo_base: str, nombre: str, version: str) -> str:
@@ -81,19 +87,23 @@ class PrepararSubidaModelo:
 
 
 class PublicarModelo:
-    """Da de alta un modelo del bucket y lo deja en la cola de evaluación.
+    """Da de alta un modelo del bucket y lo deja en la cola `evaluaciones`.
 
     Con `contrato`, viene de la subida desde la interfaz: se valida, se confirma
     que el ONNX llegó y recién ahí se escribe el modelo.json al lado. Sin él, el
     modelo ya estaba en el bucket con su contrato (la subida a mano del operador).
+
+    Si la cola no contesta, el modelo queda en `error` con el motivo: se puede
+    volver a publicar, y nada queda esperando una evaluación que nunca llega.
     """
 
     def __init__(self, catalogo: CatalogoModelosEnBucket, modelos: RepositorioModelos, reloj: Reloj,
-                 prefijo_modelos: str):
+                 prefijo_modelos: str, cola: ColaEvaluaciones):
         self._catalogo = catalogo
         self._modelos = modelos
         self._reloj = reloj
         self._prefijo = prefijo_modelos
+        self._cola = cola
 
     def ejecutar(self, nombre: str, version: str, contrato_crudo: dict[str, Any] | None = None) -> Modelo:
         prefix = prefijo_de(self._prefijo, nombre, version)
@@ -124,6 +134,12 @@ class PublicarModelo:
             self._catalogo.escribir_contrato(prefix, contrato_crudo)
 
         self._modelos.guardar(modelo)
+        try:
+            self._cola.enviar(PeticionEvaluacion.de(modelo))
+        except ServicioNoDisponible as e:
+            log.warning("no se pudo encolar la evaluación de %s v%s: %s", nombre, version, e)
+            modelo.no_se_pudo_encolar("no se pudo encolar la evaluación; volvé a publicar el modelo")
+            self._modelos.guardar(modelo)
         return modelo
 
 
@@ -141,3 +157,19 @@ class ConsultarModelo:
 
     def ejecutar(self, id: UUID) -> Modelo:
         return self._modelos.obtener(id)
+
+class VencerEvaluaciones:
+    """En el procesador: un modelo `en_curso` sin noticias hace `minutos` es de un evaluador que
+    murió en el último intento (el mensaje quedó en la cola de fallidos). Pasa a `error` para
+    que se pueda volver a publicar."""
+
+    def __init__(self, sin_noticias: EvaluacionesSinNoticias, minutos: int):
+        self._sin_noticias = sin_noticias
+        self._minutos = minutos
+
+    def ejecutar(self) -> int:
+        n = self._sin_noticias.vencer_en_curso(
+            self._minutos, "el evaluador no respondió; el mensaje quedó en la cola de fallidos")
+        if n:
+            log.warning("%s evaluaciones en_curso vencidas pasaron a error", n)
+        return n

@@ -1,10 +1,8 @@
-# API Gateway (HTTP API): la puerta HTTPS del sistema. Sin dominio propio ni CloudFront (el lab
-# no los concede), es la única forma de tener un certificado válido sin pagar nada fijo.
-#   GET /callback, GET /logout → Lambda: los pasos 3 y 4 del login (cognito.tf)
-#   GET /api/health            → backend, sin token: la barra del sitio muestra si la API contesta
-#   GET|POST /api/{proxy+}     → backend, con el access token validado por el autorizador JWT
-# Las rutas al backend existen solo con encendido = true: apagado no hay ALB al que reenviar,
-# pero el login y el sitio siguen en pie.
+# API Gateway (HTTP API): la única puerta de entrada (decisión 01). Da una dirección HTTPS con
+# certificado de AWS sin dominio propio, valida el token de Cognito y limita la tasa.
+#   GET /callback, GET /logout → Lambda: los pasos 3 y 4 del login de la clase (cognito.tf)
+#   GET /api/health            → VPC Link → ALB interno, sin token
+#   GET|POST /api/{proxy+}     → VPC Link → ALB interno, con el access token validado
 
 resource "aws_apigatewayv2_api" "ateneo" {
   name          = "ateneo"
@@ -21,6 +19,11 @@ resource "aws_apigatewayv2_api" "ateneo" {
   }
 }
 
+resource "aws_cloudwatch_log_group" "api_gateway" {
+  name              = "/aws/apigateway/ateneo"
+  retention_in_days = 7
+}
+
 resource "aws_apigatewayv2_stage" "default" {
   api_id      = aws_apigatewayv2_api.ateneo.id
   name        = "$default"
@@ -30,6 +33,20 @@ resource "aws_apigatewayv2_stage" "default" {
     throttling_rate_limit  = 50
     throttling_burst_limit = 100
   }
+
+  access_log_settings {
+    destination_arn = aws_cloudwatch_log_group.api_gateway.arn
+    format = jsonencode({
+      pedido    = "$context.requestId"
+      ip        = "$context.identity.sourceIp"
+      cuando    = "$context.requestTime"
+      ruta      = "$context.routeKey"
+      estado    = "$context.status"
+      latencia  = "$context.integrationLatency"
+      error     = "$context.error.message"
+      autorizar = "$context.authorizer.error"
+    })
+  }
 }
 
 locals {
@@ -38,7 +55,61 @@ locals {
   url_logout   = "${local.url_api}/logout"
 }
 
-# --- Login: la Lambda del callback ----------------------------------------------------
+# --- La API: VPC Link al ALB interno, con el token validado ---------------------------
+
+resource "aws_apigatewayv2_vpc_link" "ateneo" {
+  name               = "ateneo"
+  subnet_ids         = local.sub["aplicacion"]
+  security_group_ids = [local.sg["vpclink"]]
+}
+
+resource "aws_apigatewayv2_integration" "alb" {
+  api_id             = aws_apigatewayv2_api.ateneo.id
+  integration_type   = "HTTP_PROXY"
+  integration_method = "ANY"
+  connection_type    = "VPC_LINK"
+  connection_id      = aws_apigatewayv2_vpc_link.ateneo.id
+  integration_uri    = aws_lb_listener.api.arn
+
+  # El camino tal cual llegó (/api/...). Con el stage $default ya es así; queda escrito.
+  request_parameters = {
+    "overwrite:path" = "$request.path"
+  }
+}
+
+# Firma, emisor, vencimiento y cliente. Un access token de Cognito no trae aud: API Gateway
+# compara la audiencia contra su client_id. Vale cualquiera de los dos clientes.
+resource "aws_apigatewayv2_authorizer" "cognito" {
+  api_id           = aws_apigatewayv2_api.ateneo.id
+  name             = "cognito"
+  authorizer_type  = "JWT"
+  identity_sources = ["$request.header.Authorization"]
+
+  jwt_configuration {
+    issuer   = local.cognito_emisor
+    audience = [for c in aws_cognito_user_pool_client.web : c.id]
+  }
+}
+
+locals {
+  # ruta => ¿pide token?
+  rutas_api = {
+    "GET /api/health"    = false
+    "GET /api/{proxy+}"  = true
+    "POST /api/{proxy+}" = true
+  }
+}
+
+resource "aws_apigatewayv2_route" "api" {
+  for_each           = local.rutas_api
+  api_id             = aws_apigatewayv2_api.ateneo.id
+  route_key          = each.key
+  target             = "integrations/${aws_apigatewayv2_integration.alb.id}"
+  authorization_type = each.value ? "JWT" : "NONE"
+  authorizer_id      = each.value ? aws_apigatewayv2_authorizer.cognito.id : null
+}
+
+# --- Login: la Lambda del callback (el recorrido de la clase) --------------------------
 
 data "archive_file" "callback" {
   type        = "zip"
@@ -48,7 +119,7 @@ data "archive_file" "callback" {
 
 resource "aws_cloudwatch_log_group" "callback" {
   name              = "/aws/lambda/ateneo-callback"
-  retention_in_days = 14
+  retention_in_days = 7
 }
 
 # Sin VPC: tiene que llegar al endpoint de tokens de Cognito, que está en internet.
@@ -65,15 +136,16 @@ resource "aws_lambda_function" "callback" {
   environment {
     variables = {
       COGNITO_DOMINIO = local.cognito_dominio
-      CLIENTE_ID      = aws_cognito_user_pool_client.web.id
-      CLIENTE_SECRETO = aws_cognito_user_pool_client.web.client_secret
-      URL_CALLBACK    = local.url_callback # tiene que ser idéntica a la del pedido de /authorize
-      URL_SITIO       = local.url_sitio
+      # tipo de cuenta => cliente: el sitio pone el tipo al principio del state
+      CLIENTES = jsonencode({
+        for tipo, c in aws_cognito_user_pool_client.web : tipo => { id = c.id, secreto = c.client_secret }
+      })
+      URL_CALLBACK = local.url_callback # tiene que ser idéntica a la del pedido de /authorize
+      URL_SITIO    = local.url_sitio
     }
   }
 }
 
-# Permiso basado en recurso, como el del guardián: API Gateway invoca sin rol propio.
 resource "aws_lambda_permission" "callback" {
   statement_id  = "apigateway"
   action        = "lambda:InvokeFunction"
@@ -95,47 +167,4 @@ resource "aws_apigatewayv2_route" "login" {
   api_id    = aws_apigatewayv2_api.ateneo.id
   route_key = each.key
   target    = "integrations/${aws_apigatewayv2_integration.callback.id}"
-}
-
-# --- La API: proxy al ALB con el token validado ---------------------------------------
-
-# Firma, emisor, vencimiento y cliente. Un access token de Cognito no trae aud: API Gateway
-# compara la audiencia contra su client_id.
-resource "aws_apigatewayv2_authorizer" "cognito" {
-  api_id           = aws_apigatewayv2_api.ateneo.id
-  name             = "cognito"
-  authorizer_type  = "JWT"
-  identity_sources = ["$request.header.Authorization"]
-
-  jwt_configuration {
-    issuer   = local.cognito_emisor
-    audience = [aws_cognito_user_pool_client.web.id]
-  }
-}
-
-locals {
-  # ruta => [camino en el backend, ¿pide token?]
-  rutas_backend = {
-    "GET /api/health"    = ["/api/health", false]
-    "GET /api/{proxy+}"  = ["/api/{proxy}", true]
-    "POST /api/{proxy+}" = ["/api/{proxy}", true]
-  }
-}
-
-# HTTP_PROXY reenvía método, cabeceras (Authorization incluida) y query string tal cual.
-resource "aws_apigatewayv2_integration" "backend" {
-  for_each           = var.encendido ? toset(["/api/health", "/api/{proxy}"]) : toset([])
-  api_id             = aws_apigatewayv2_api.ateneo.id
-  integration_type   = "HTTP_PROXY"
-  integration_method = "ANY"
-  integration_uri    = "http://${aws_lb.app[0].dns_name}${each.key}"
-}
-
-resource "aws_apigatewayv2_route" "backend" {
-  for_each           = { for ruta, v in local.rutas_backend : ruta => v if var.encendido }
-  api_id             = aws_apigatewayv2_api.ateneo.id
-  route_key          = each.key
-  target             = "integrations/${aws_apigatewayv2_integration.backend[each.value[0]].id}"
-  authorization_type = each.value[1] ? "JWT" : "NONE"
-  authorizer_id      = each.value[1] ? aws_apigatewayv2_authorizer.cognito.id : null
 }

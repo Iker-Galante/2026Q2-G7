@@ -105,6 +105,14 @@ button.chico {
   font-size: 0.86rem;
 }
 
+.pide-ingreso {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1rem;
+  color: var(--texto-suave);
+}
+
 .aviso-ingreso {
   max-width: var(--ancho);
   margin: 1.5rem auto 0;

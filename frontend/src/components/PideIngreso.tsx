@@ -1,4 +1,4 @@
-import { ingresar } from "../api/sesion";
+import { crearCuenta, ingresar } from "../api/sesion";
 
 const TEXTOS = {
   "/publicar": { eyebrow: "Para quien publica", titulo: "Publicar un modelo" },
@@ -19,14 +19,24 @@ export default function PideIngreso({ ruta }: Props) {
         <h1>{titulo}</h1>
         <p className="lede">
           Esta sección pide una cuenta. El ingreso lo resuelve Cognito en su propia pantalla: la
-          contraseña nunca pasa por Ateneo. Si todavía no tenés cuenta, la creás ahí mismo con tu
-          email.
+          contraseña nunca pasa por Ateneo.
         </p>
       </header>
-      <div>
+      <div className="pide-ingreso">
         <button type="button" onClick={ingresar}>
-          Ingresar o crear cuenta
+          Ingresar
         </button>
+        <p>
+          ¿No tenés cuenta? Creá una de{" "}
+          <button type="button" className="enlace" onClick={() => crearCuenta("institucion")}>
+            institución
+          </button>{" "}
+          o de{" "}
+          <button type="button" className="enlace" onClick={() => crearCuenta("publicador")}>
+            publicador
+          </button>
+          . Los médicos llegan por invitación de su institución.
+        </p>
       </div>
     </div>
   );

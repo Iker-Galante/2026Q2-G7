@@ -1,17 +1,16 @@
 # cp terraform.tfvars.example terraform.tfvars  (terraform.tfvars no se commitea)
 
-# Sufijo de los cinco buckets. Vacío = uno al azar que queda fijo en el estado.
-sufijo = ""
+# El admin_plataforma inicial: Cognito le manda una contraseña temporal por mail.
+email_admin = ""
 
-# Recibe las alarmas (DLQ, cola atascada, backend sin instancias sanas) y el informe del guardián.
+# Recibe las alarmas de operación (colas de fallidos, 5xx del ALB). Hay que confirmar la suscripción.
 email_alertas = ""
 
-# "sqs" (por defecto): cola SQS + DLQ, sin ALB interno. "http": como la guía, con ALB interno.
-modo_inferencia = "sqs"
+# Sufijo de los buckets y del dominio de Cognito. Vacío = uno al azar que queda fijo en el estado.
+sufijo = ""
 
-# Dejalo vacío la primera vez: Terraform construye la imagen dorada. Después podés fijarla acá.
-ami_worker_id = ""
+# El constructor siembra el modelo de la E2 y el conjunto de 200 casos de Hugging Face.
+datos_demo = true
 
-# Si la cuenta no permite c5.large: m5.large.
-# tipo_worker = "m5.large"
-# tipo_eval   = "m5.large"
+# false si el laboratorio no deja asociar un WAF al ALB.
+waf_activo = true

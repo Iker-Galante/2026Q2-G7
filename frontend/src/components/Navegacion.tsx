@@ -53,7 +53,10 @@ export default function Navegacion({ salud, consultado, tema, onAlternarTema }: 
           {conLogin &&
             (sesion ? (
               <span className="sesion">
-                <span className="sesion-email" title={sesion.email ?? undefined}>
+                <span
+                  className="sesion-email"
+                  title={sesion.grupos.length ? `Grupos: ${sesion.grupos.join(", ")}` : undefined}
+                >
                   {sesion.email ?? "Sesión iniciada"}
                 </span>
                 <button type="button" className="secundario chico" onClick={salir}>

@@ -1,12 +1,12 @@
-"""Ateneo · backend (capa app).
+"""Ateneo · API (servicio `api` de ECS, capa de aplicación).
 
 `uvicorn app.main:app --host 0.0.0.0 --port 8080 --workers 2`
-Cada proceso arma su propio contenedor, su pool y su despachador.
+Cada proceso arma su propio contenedor y su pool. No hay bucles de fondo: lo que corre
+solo (escribir resultados, reenviar, vencer) es del procesador (procesador.py).
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -22,8 +22,7 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s · %(message)s",
 )
 logging.getLogger("botocore").setLevel(logging.WARNING)
-logging.getLogger("httpx").setLevel(logging.WARNING)
-log = logging.getLogger("ateneo.backend")
+log = logging.getLogger("ateneo.api")
 
 
 @asynccontextmanager
@@ -32,22 +31,13 @@ async def ciclo_de_vida(app: FastAPI):
     contenedor = dependencias.armar(settings)
     contenedor.abrir()
     app.state.contenedor = contenedor
-
-    detener = asyncio.Event()
-    tarea = None
-    if settings.despachador_activo:
-        tarea = asyncio.create_task(contenedor.despachador.correr(detener), name="despachador")
-    destino = settings.cola_inferencias_url if settings.modo_inferencia == "sqs" else settings.inferencia_url
-    log.info("backend listo · modo=%s · inferencia=%s · modelos=%s · estudios=%s",
-             settings.modo_inferencia, destino, settings.bucket_modelos, settings.bucket_estudios)
+    log.info("api lista · inferencias=%s · evaluaciones=%s · cognito=%s",
+             settings.cola_inferencias_url, settings.cola_evaluaciones_url, settings.cognito_user_pool_id or "no")
     try:
         yield
     finally:
-        detener.set()
-        if tarea is not None:
-            await tarea
         contenedor.cerrar()
-        log.info("backend detenido")
+        log.info("api detenida")
 
 
 def crear_app() -> FastAPI:

@@ -1,6 +1,8 @@
 // La sesión de Cognito del lado del navegador: los pasos 2, 5 y 6 del login.
 //
-//   2. ingresar() manda al Hosted UI con un `state` al azar.
+//   2. ingresar() (o crearCuenta()) manda al Hosted UI con un `state` al azar,
+//      que empieza con el tipo de cuenta: la Lambda lo usa para saber con qué
+//      cliente de Cognito canjear el código.
 //   3-4. Cognito vuelve a GET /callback de API Gateway; la Lambda canjea el
 //        código y redirige acá con los tokens en el fragmento (#access_token=…).
 //   5. recibirDelCallback() los lee, comprueba el `state`, los guarda en
@@ -12,6 +14,7 @@
 // al usuario y no pide la contraseña.
 
 import { configuracion } from "./configuracion";
+import type { TipoCuenta } from "./configuracion";
 
 export interface Sesion {
   accessToken: string;
@@ -19,6 +22,8 @@ export interface Sesion {
   /** Epoch en ms. Con 30 s de margen respecto del vencimiento real. */
   expira: number;
   email: string | null;
+  /** Los grupos de Cognito: medico, admin_institucion, publicador, admin_plataforma. */
+  grupos: string[];
 }
 
 const CLAVE_SESION = "ateneo:sesion";
@@ -31,7 +36,9 @@ let sesion: Sesion | null = leerGuardada();
 function leerGuardada(): Sesion | null {
   try {
     const valor = JSON.parse(window.localStorage.getItem(CLAVE_SESION) ?? "null") as Sesion | null;
-    if (valor && typeof valor.accessToken === "string" && valor.expira > Date.now()) return valor;
+    if (valor && typeof valor.accessToken === "string" && valor.expira > Date.now()) {
+      return { ...valor, grupos: Array.isArray(valor.grupos) ? valor.grupos : [] };
+    }
   } catch {
     // Almacenamiento bloqueado o valor roto: sin sesión.
   }
@@ -78,25 +85,35 @@ function alAzar(): string {
 }
 
 /** Paso 2: al Hosted UI de Cognito. Vuelve a la ruta actual después de ingresar. */
-export function ingresar(): void {
+function alHostedUI(pagina: "oauth2/authorize" | "signup", tipo: TipoCuenta): void {
   const cognito = configuracion().cognito;
   if (!cognito) return;
-  const estado = alAzar();
+  const estado = `${tipo}.${alAzar()}`;
   try {
     window.sessionStorage.setItem(CLAVE_ESTADO, estado);
     window.sessionStorage.setItem(CLAVE_VOLVER, window.location.pathname);
   } catch {
     // Sin sessionStorage no se puede comprobar el state: el ingreso va a fallar con un aviso.
   }
-  const url = new URL(`${cognito.dominio}/oauth2/authorize`);
+  const url = new URL(`${cognito.dominio}/${pagina}`);
   url.search = new URLSearchParams({
     response_type: "code",
-    client_id: cognito.clienteId,
+    client_id: cognito.clientes[tipo],
     redirect_uri: cognito.callback,
     scope: "openid email profile",
     state: estado,
   }).toString();
   window.location.assign(url.toString());
+}
+
+/** Cualquier cuenta entra por cualquiera de los clientes: el grupo ya quedó fijado al registrarse. */
+export function ingresar(): void {
+  alHostedUI("oauth2/authorize", "publicador");
+}
+
+/** El registro de una institución o de un publicador (sección 3.4 de la arquitectura). */
+export function crearCuenta(tipo: TipoCuenta): void {
+  alHostedUI("signup", tipo);
 }
 
 /** Borra la sesión local y la de Cognito, que vuelve al sitio por /logout. */
@@ -105,19 +122,18 @@ export function salir(): void {
   const cognito = configuracion().cognito;
   if (!cognito) return;
   const url = new URL(`${cognito.dominio}/logout`);
-  url.search = new URLSearchParams({ client_id: cognito.clienteId, logout_uri: cognito.logout }).toString();
+  url.search = new URLSearchParams({ client_id: cognito.clientes.publicador, logout_uri: cognito.logout }).toString();
   window.location.assign(url.toString());
 }
 
-/** El email del id token, solo para mostrarlo: la firma la comprueba la API, no el navegador. */
-function emailDe(idToken: string): string | null {
+/** Los claims del id token, solo para mostrarlos: la firma la comprueba la API, no el navegador. */
+function claimsDe(idToken: string): Record<string, unknown> {
   try {
     const parte = idToken.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
     const binario = window.atob(parte.padEnd(Math.ceil(parte.length / 4) * 4, "="));
-    const claims = JSON.parse(new TextDecoder().decode(Uint8Array.from(binario, (c) => c.charCodeAt(0))));
-    return typeof claims.email === "string" ? claims.email : null;
+    return JSON.parse(new TextDecoder().decode(Uint8Array.from(binario, (c) => c.charCodeAt(0))));
   } catch {
-    return null;
+    return {};
   }
 }
 
@@ -151,12 +167,15 @@ export function recibirDelCallback(): string | null {
   }
 
   const idToken = fragmento.get("id_token") ?? "";
+  const claims = claimsDe(idToken);
+  const grupos = claims["cognito:groups"];
   const segundos = Number(fragmento.get("expires_in") ?? "3600");
   cambiar({
     accessToken: fragmento.get("access_token") ?? "",
     idToken,
     expira: Date.now() + (Number.isFinite(segundos) ? segundos : 3600) * 1000 - 30_000,
-    email: emailDe(idToken),
+    email: typeof claims.email === "string" ? claims.email : null,
+    grupos: Array.isArray(grupos) ? grupos.filter((g): g is string => typeof g === "string") : [],
   });
   return null;
 }

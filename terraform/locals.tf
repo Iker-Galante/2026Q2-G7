@@ -1,6 +1,7 @@
 data "aws_caller_identity" "yo" {}
 
-# En el Learner Lab no se crean roles: todo usa LabRole y su perfil de instancia.
+# En el Learner Lab no se crean roles: tareas, Lambdas y constructor usan LabRole o su perfil de
+# instancia (sección 09). En producción, cada servicio tendría el suyo.
 data "aws_iam_role" "lab" {
   name = "LabRole"
 }
@@ -9,9 +10,13 @@ data "aws_iam_instance_profile" "lab" {
   name = "LabInstanceProfile"
 }
 
-# Amazon Linux 2023, x86_64: la de lt-app y la base de la imagen dorada.
+# Amazon Linux 2023, x86_64: la del constructor.
 data "aws_ssm_parameter" "al2023" {
   name = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
+}
+
+data "aws_ec2_managed_prefix_list" "s3" {
+  name = "com.amazonaws.${var.region}.s3"
 }
 
 resource "random_string" "sufijo" {
@@ -22,16 +27,14 @@ resource "random_string" "sufijo" {
 
 locals {
   sufijo = var.sufijo != "" ? var.sufijo : random_string.sufijo.result
-  sqs    = var.modo_inferencia == "sqs"
-  http   = var.modo_inferencia == "http"
 
+  # El bucket web es el sitio, el paso 1 del login (cognito.tf); artefactos lleva el código que
+  # construye el constructor (imagenes.tf).
   buckets = {
-    deploy     = "ateneo-deploy-${local.sufijo}"
     web        = "ateneo-web-${local.sufijo}"
     modelos    = "ateneo-modelos-${local.sufijo}"
     estudios   = "ateneo-estudios-${local.sufijo}"
     evaluacion = "ateneo-evaluacion-${local.sufijo}"
+    artefactos = "ateneo-artefactos-${local.sufijo}"
   }
-
-  ami_worker = var.ami_worker_id != "" ? var.ami_worker_id : one(aws_ami_from_instance.worker[*].id)
 }

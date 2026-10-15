@@ -1,5 +1,5 @@
-# Planes contra un proveedor simulado: prueban la lógica (modos, interruptor, .env) sin
-# credenciales ni cuenta de AWS.   terraform init -backend=false && terraform test
+# La arquitectura del HTML («Ateneo en AWS 2.0»), comprobada contra un AWS simulado: sin
+# credenciales ni cuenta.   terraform init -backend=false && terraform test
 
 mock_provider "aws" {
   mock_data "aws_ssm_parameter" {
@@ -13,40 +13,33 @@ mock_provider "aws" {
   }
   mock_resource "aws_sqs_queue" {
     defaults = {
-      arn = "arn:aws:sqs:us-east-1:123456789012:ateneo-inferencias"
-      url = "https://sqs.us-east-1.amazonaws.com/123456789012/ateneo-inferencias"
+      arn = "arn:aws:sqs:us-east-1:123456789012:ateneo-cola"
+      url = "https://sqs.us-east-1.amazonaws.com/123456789012/ateneo-cola"
     }
   }
   mock_resource "aws_lb" {
     defaults = {
-      arn        = "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/alb-ateneo/0123456789abcdef"
-      arn_suffix = "app/alb-ateneo/0123456789abcdef"
-      dns_name   = "alb-ateneo-123.us-east-1.elb.amazonaws.com"
+      arn        = "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/ateneo-interno/0123456789abcdef"
+      arn_suffix = "app/ateneo-interno/0123456789abcdef"
     }
   }
   mock_resource "aws_lb_target_group" {
-    defaults = {
-      arn        = "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/tg/0123456789abcdef"
-      arn_suffix = "targetgroup/tg/0123456789abcdef"
-    }
+    defaults = { arn = "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/ateneo-api/0123456789abcdef" }
   }
-  mock_resource "aws_launch_template" {
-    defaults = { id = "lt-0123456789abcdef0", latest_version = 1 }
+  mock_resource "aws_lb_listener" {
+    defaults = { arn = "arn:aws:elasticloadbalancing:us-east-1:123456789012:listener/app/ateneo-interno/0123456789abcdef/0123456789abcdef" }
   }
   mock_resource "aws_s3_bucket" {
     defaults = { arn = "arn:aws:s3:::ateneo-bucket" }
   }
-  mock_resource "aws_lambda_function" {
-    defaults = { arn = "arn:aws:lambda:us-east-1:123456789012:function:ateneo-guardian" }
-  }
-  mock_resource "aws_cloudwatch_event_rule" {
-    defaults = { arn = "arn:aws:events:us-east-1:123456789012:rule/ateneo-guardian-nocturno" }
-  }
-  mock_resource "aws_sns_topic" {
-    defaults = { arn = "arn:aws:sns:us-east-1:123456789012:ateneo-alertas" }
-  }
   mock_resource "aws_s3_bucket_website_configuration" {
     defaults = { website_endpoint = "ateneo-web-prueba.s3-website-us-east-1.amazonaws.com" }
+  }
+  mock_resource "aws_lambda_function" {
+    defaults = {
+      arn        = "arn:aws:lambda:us-east-1:123456789012:function:ateneo"
+      invoke_arn = "arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/arn:aws:lambda:us-east-1:123456789012:function:ateneo/invocations"
+    }
   }
   mock_resource "aws_apigatewayv2_api" {
     defaults = {
@@ -57,11 +50,27 @@ mock_provider "aws" {
   mock_resource "aws_cognito_user_pool" {
     defaults = {
       id       = "us-east-1_prueba"
+      arn      = "arn:aws:cognito-idp:us-east-1:123456789012:userpool/us-east-1_prueba"
       endpoint = "cognito-idp.us-east-1.amazonaws.com/us-east-1_prueba"
     }
   }
-  mock_resource "aws_cognito_user_pool_client" {
-    defaults = { id = "cliente123", client_secret = "secreto" }
+  mock_resource "aws_ecr_repository" {
+    defaults = { repository_url = "123456789012.dkr.ecr.us-east-1.amazonaws.com/ateneo/repo" }
+  }
+  mock_resource "aws_sns_topic" {
+    defaults = { arn = "arn:aws:sns:us-east-1:123456789012:ateneo-alertas" }
+  }
+  mock_resource "aws_cloudwatch_log_group" {
+    defaults = { arn = "arn:aws:logs:us-east-1:123456789012:log-group:ateneo" }
+  }
+  mock_resource "aws_secretsmanager_secret" {
+    defaults = { arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:ateneo/database-url-abc" }
+  }
+  mock_resource "aws_appautoscaling_policy" {
+    defaults = { arn = "arn:aws:autoscaling:us-east-1:123456789012:scalingPolicy:x:resource/ecs/service/ateneo/s:policyName/p" }
+  }
+  mock_resource "aws_wafv2_web_acl" {
+    defaults = { arn = "arn:aws:wafv2:us-east-1:123456789012:regional/webacl/ateneo/0123" }
   }
 }
 
@@ -69,127 +78,138 @@ mock_provider "random" {}
 mock_provider "archive" {}
 
 variables {
-  sufijo        = "prueba"
-  ami_worker_id = "ami-0fedcba9876543210"
+  sufijo = "prueba"
+  # Esperar las imágenes es un local-exec contra ECR: en las pruebas no hay cuenta a la que preguntar.
+  esperar_imagenes = false
 }
 
-run "http_encendido" {
-  command = apply
-  variables {
-    modo_inferencia = "http"
-  }
-
-  assert {
-    condition     = length(aws_lb.inf) == 1 && length(aws_vpc_endpoint.sqs) == 0
-    error_message = "En modo http tiene que haber ALB interno y no endpoint de SQS."
-  }
-  assert {
-    condition     = length(aws_nat_gateway.ateneo) == 1 && aws_autoscaling_group.app.min_size == 2
-    error_message = "Encendido: NAT y dos instancias de app."
-  }
-  assert {
-    condition     = strcontains(aws_s3_object.env["backend"].content, "INFERENCIA_URL=http://")
-    error_message = "El backend.env tiene que apuntar al ALB interno."
-  }
-  assert {
-    condition     = !strcontains(aws_s3_object.env["worker"].content, "DATABASE_URL")
-    error_message = "En modo http el worker no lleva credenciales de base."
-  }
-  assert {
-    condition     = length(aws_instance.eval) == 1 && length(aws_instance.constructor) == 0
-    error_message = "eval-1 existe y no se construye imagen si se pasó ami_worker_id."
-  }
-}
-
-run "sqs_encendido" {
-  command = apply
-  variables {
-    modo_inferencia = "sqs"
-  }
-
-  assert {
-    condition     = length(aws_lb.inf) == 0 && length(aws_vpc_endpoint.sqs) == 1
-    error_message = "En modo sqs no hay ALB interno y sí endpoint de SQS."
-  }
-  assert {
-    condition     = aws_autoscaling_group.inf.health_check_type == "EC2" && length(aws_autoscaling_policy.inf_cola) == 1
-    error_message = "En modo sqs el grupo de inferencia mira EC2 y escala por cola."
-  }
-  assert {
-    condition     = strcontains(aws_s3_object.env["worker"].content, "COLA_INFERENCIAS_URL=https://sqs.")
-    error_message = "El worker.env tiene que traer la URL de la cola."
-  }
-  assert {
-    condition     = strcontains(aws_s3_object.env["backend"].content, "MODO_INFERENCIA=sqs")
-    error_message = "En modo sqs el backend tiene que encolar en SQS."
-  }
-}
-
-run "login_con_cognito" {
+run "red" {
   command = apply
 
   assert {
-    condition     = contains(aws_cognito_user_pool_client.web.callback_urls, "https://abc123.execute-api.us-east-1.amazonaws.com/callback")
-    error_message = "Cognito tiene que volver al /callback de API Gateway (HTTPS), no al sitio."
+    condition     = length(aws_subnet.capa) == 11 && length(aws_route_table.capa) == 6
+    error_message = "Once subredes en seis capas, una tabla de ruteo por capa."
+  }
+  assert {
+    condition     = aws_route.aplicacion_nat.route_table_id == aws_route_table.capa["aplicacion"].id
+    error_message = "Solo la capa de aplicación sale por el NAT."
+  }
+  assert {
+    condition     = length(aws_vpc_endpoint.s3.route_table_ids) == 3 && !contains(aws_vpc_endpoint.s3.route_table_ids, aws_route_table.capa["datos"].id)
+    error_message = "El endpoint de S3 va en aplicación, inferencia y evaluación; datos no lo necesita."
+  }
+  assert {
+    condition = alltrue([
+      for e in aws_vpc_endpoint.interfaz : e.subnet_ids == toset([aws_subnet.capa["endpoints-a"].id, aws_subnet.capa["endpoints-b"].id])
+    ]) && length(aws_vpc_endpoint.interfaz) == 4
+    error_message = "Cuatro endpoints de interfaz (ecr.api, ecr.dkr, logs, sqs) en sus propias subredes."
+  }
+  assert {
+    condition     = length(aws_network_acl.evaluacion.egress) == 1 && one(aws_network_acl.evaluacion.egress).from_port == 443
+    error_message = "La NACL de evaluación solo deja salir al 443."
+  }
+  assert {
+    condition = length([
+      for r in aws_vpc_security_group_ingress_rule.r : r
+      if contains([for g in ["procesador", "worker", "evaluador", "constructor"] : aws_security_group.g[g].id], r.security_group_id)
+    ]) == 0
+    error_message = "procesador, worker, evaluador y constructor no tienen reglas de entrada."
+  }
+  assert {
+    condition = toset([
+      for r in aws_vpc_security_group_ingress_rule.r : r.referenced_security_group_id if r.security_group_id == aws_security_group.g["db"].id
+    ]) == toset([aws_security_group.g["api"].id, aws_security_group.g["procesador"].id])
+    error_message = "A la base llegan solo api y procesador."
+  }
+}
+
+run "computo" {
+  command = apply
+
+  assert {
+    condition     = length(aws_ecs_service.s) == 4 && aws_lb.interno.internal
+    error_message = "Cuatro servicios de Fargate detrás de un ALB interno."
+  }
+  assert {
+    condition = alltrue([for s in ["api", "procesador"] : strcontains(aws_ecs_task_definition.s[s].container_definitions, "DATABASE_URL")]) && !anytrue([
+      for s in ["worker", "evaluador"] : strcontains(aws_ecs_task_definition.s[s].container_definitions, "DATABASE_URL")
+    ])
+    error_message = "Solo api y procesador reciben la base; las capas que corren modelos de terceros no tienen secretos."
+  }
+  assert {
+    condition     = length(aws_ecs_task_definition.s["worker"].volume) == 1 && strcontains(aws_ecs_task_definition.s["worker"].container_definitions, "/mnt/modelos")
+    error_message = "El worker monta EFS como caché de modelos."
+  }
+  assert {
+    condition     = aws_appautoscaling_target.s["evaluador"].min_capacity == 0 && aws_appautoscaling_target.s["evaluador"].max_capacity == 1
+    error_message = "El evaluador pasa de 0 a 1 tarea según su cola."
+  }
+  assert {
+    condition     = strcontains(aws_ecs_task_definition.s["api"].container_definitions, ":${output.version_codigo}")
+    error_message = "Las imágenes llevan el hash del código como etiqueta."
+  }
+  assert {
+    condition     = [for k in ["inferencias", "evaluaciones", "resultados"] : jsondecode(aws_sqs_queue.cola[k].redrive_policy).maxReceiveCount] == [3, 2, 5]
+    error_message = "Tres colas, cada una con su cola de fallidos: 3, 2 y 5 intentos."
+  }
+  assert {
+    condition     = length(aws_wafv2_web_acl_association.alb) == 1
+    error_message = "WAF asociado al ALB."
+  }
+}
+
+run "login_de_la_clase" {
+  command = apply
+
+  assert {
+    condition = alltrue([
+      for c in aws_cognito_user_pool_client.web : contains(c.callback_urls, "https://abc123.execute-api.us-east-1.amazonaws.com/callback")
+    ])
+    error_message = "Cognito vuelve al /callback de API Gateway (HTTPS), no al sitio."
   }
   assert {
     condition     = aws_lambda_function.callback.environment[0].variables.URL_SITIO == "http://ateneo-web-prueba.s3-website-us-east-1.amazonaws.com"
-    error_message = "La Lambda del callback tiene que redirigir al sitio en S3."
+    error_message = "La Lambda del callback redirige al sitio en S3."
   }
   assert {
     condition     = jsondecode(aws_s3_object.config_web.content).cognito.callback == aws_lambda_function.callback.environment[0].variables.URL_CALLBACK
-    error_message = "El sitio y la Lambda tienen que usar el mismo redirect_uri, o Cognito rechaza el canje."
+    error_message = "El sitio y la Lambda usan el mismo redirect_uri, o Cognito rechaza el canje."
   }
   assert {
-    condition     = aws_apigatewayv2_route.backend["POST /api/{proxy+}"].authorization_type == "JWT" && aws_apigatewayv2_route.backend["GET /api/health"].authorization_type == "NONE"
+    condition     = keys(jsondecode(aws_s3_object.config_web.content).cognito.clientes) == ["institucion", "publicador"]
+    error_message = "Un cliente por tipo de registro."
+  }
+  assert {
+    condition     = length(aws_cognito_user_group.g) == 4 && aws_cognito_user_pool.ateneo.lambda_config[0].post_confirmation == aws_lambda_function.post_confirmacion.arn
+    error_message = "Cuatro grupos y la Lambda de post-confirmación que asigna el grupo."
+  }
+  assert {
+    condition     = aws_apigatewayv2_route.api["POST /api/{proxy+}"].authorization_type == "JWT" && aws_apigatewayv2_route.api["GET /api/health"].authorization_type == "NONE"
     error_message = "La API pide token salvo /api/health."
   }
   assert {
-    condition     = strcontains(aws_s3_object.env["backend"].content, "COGNITO_CLIENT_ID=cliente123")
-    error_message = "El backend tiene que recibir el cliente de Cognito para validar el token."
+    condition     = aws_apigatewayv2_integration.alb.connection_type == "VPC_LINK"
+    error_message = "API Gateway llega al ALB interno por el VPC Link."
   }
   assert {
-    condition     = !strcontains(aws_s3_object.env["backend"].content, "secreto")
-    error_message = "El secreto del cliente es solo de la Lambda."
-  }
-  assert {
-    condition     = aws_s3_bucket_public_access_block.b["web"].block_public_policy == false && aws_s3_bucket_public_access_block.b["modelos"].block_public_policy == true
-    error_message = "Solo el bucket web es público."
+    condition     = aws_s3_bucket_public_access_block.b["web"].block_public_policy == false && alltrue([for k in ["modelos", "estudios", "evaluacion", "artefactos"] : aws_s3_bucket_public_access_block.b[k].block_public_policy])
+    error_message = "Solo el bucket web (el sitio) es público."
   }
 }
 
-run "apagado" {
+run "sin_waf_con_admin" {
   command = apply
   variables {
-    encendido = false
+    waf_activo  = false
+    email_admin = "admin@ejemplo.com"
   }
 
   assert {
-    condition     = length(aws_nat_gateway.ateneo) == 0 && length(aws_lb.app) == 0 && length(aws_lb.inf) == 0
-    error_message = "Apagado: sin NAT ni balanceadores."
+    condition     = length(aws_wafv2_web_acl.alb) == 0 && length(aws_wafv2_web_acl_association.alb) == 0
+    error_message = "waf_activo = false apaga el WAF."
   }
   assert {
-    condition     = aws_autoscaling_group.app.max_size == 0 && aws_autoscaling_group.inf.max_size == 0
-    error_message = "Apagado: los dos grupos en 0."
-  }
-  assert {
-    condition     = aws_rds_instance_state.ateneo.state == "stopped" && length(aws_instance.eval) == 0
-    error_message = "Apagado: base detenida y eval-1 terminada."
-  }
-  assert {
-    condition     = length(aws_apigatewayv2_route.backend) == 0 && length(aws_apigatewayv2_route.login) == 2
-    error_message = "Apagado: sin rutas al backend, pero el login sigue en pie."
-  }
-}
-
-run "construye_la_imagen_si_no_hay_ami" {
-  command = plan
-  variables {
-    ami_worker_id = ""
-  }
-
-  assert {
-    condition     = length(aws_instance.constructor) == 1 && length(aws_ami_from_instance.worker) == 1
-    error_message = "Sin ami_worker_id, Terraform construye la imagen dorada."
+    condition     = length(aws_cognito_user_in_group.admin) == 1 && aws_cognito_user_in_group.admin[0].group_name == "admin_plataforma"
+    error_message = "El admin inicial se crea con Terraform, en admin_plataforma."
   }
 }
