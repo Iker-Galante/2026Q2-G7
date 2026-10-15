@@ -12,9 +12,8 @@ unzip -o backend-latest.zip
 aws s3 cp s3://${bucket_deploy}/config/backend.env /etc/ateneo.env
 chmod 600 /etc/ateneo.env
 
-# El sitio estático que esta instancia sirve en "/" (guía §10).
-mkdir -p /opt/ateneo/web
-aws s3 sync s3://${bucket_web}/ /opt/ateneo/web/
+# Sin sitio: lo sirve el bucket web como sitio estático (s3.tf). Esta instancia atiende solo
+# la API, a la que se llega por API Gateway.
 
 python3.11 -m venv venv
 ./venv/bin/pip install -q -r backend/requirements.txt

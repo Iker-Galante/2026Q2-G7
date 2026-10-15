@@ -79,7 +79,9 @@ cd frontend && npm install && npm run dev            # http://localhost:5173, pr
 
 El 5173 es **solo para desarrollar** con recarga en caliente, y necesita el Docker levantado: hace
 proxy de `/api` al 8080. La aplicación se abre en <http://localhost:8080>, donde el backend sirve
-el sitio y la API desde el mismo origen, igual que el ALB en AWS.
+el sitio y la API desde el mismo origen, sin login. En AWS con Terraform el sitio está en S3, la
+API detrás de API Gateway y el ingreso es con Cognito (ver «Login con Cognito» en
+[terraform/README.md](terraform/README.md)).
 
 ## Desplegar en AWS Academy
 
@@ -93,6 +95,7 @@ bash terraform/scripts/tf.sh apply -target='aws_s3_bucket.b'
 bash terraform/scripts/entorno-desde-terraform.sh
 bash infra/desplegar.sh todo
 bash terraform/scripts/tf.sh apply                          # todo lo demás
+bash terraform/scripts/tf.sh output url                     # el sitio: «Ingresar» crea la cuenta en Cognito
 bash terraform/scripts/tf.sh apply -var encendido=false     # antes de End Lab
 ```
 

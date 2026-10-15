@@ -1,5 +1,24 @@
 output "url" {
-  description = "La aplicación (sitio y API bajo la misma URL)."
+  description = "El sitio, en S3. El login pasa por Cognito y la API por API Gateway."
+  value       = local.url_sitio
+}
+
+output "api" {
+  description = "API Gateway: /callback y /logout del login, y /api/* hacia el backend."
+  value       = local.url_api
+}
+
+output "cognito_login" {
+  description = "El Hosted UI de Cognito."
+  value       = local.cognito_dominio
+}
+
+output "cognito_user_pool" {
+  value = aws_cognito_user_pool.ateneo.id
+}
+
+output "alb" {
+  description = "El backend sin pasar por API Gateway: solo para diagnóstico (pide token igual)."
   value       = var.encendido ? "http://${aws_lb.app[0].dns_name}" : "(apagado)"
 }
 

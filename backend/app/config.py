@@ -20,7 +20,11 @@ class Settings(BaseSettings):
     modo_inferencia: Literal["http", "sqs"] = "http"
     inferencia_url: str | None = None        # http://internal-alb-...:8081
     cola_inferencias_url: str | None = None  # https://sqs.us-east-1.amazonaws.com/<cuenta>/ateneo-inferencias
-    origen_web: str | None = None            # informativo; sitio y API comparten origen
+    origen_web: str | None = None            # informativo: el sitio (en AWS, el bucket web)
+    # Con los dos, cada pedido a /api/* tiene que traer un access token válido de ese user pool.
+    # Sin ellos (docker compose, tests) todos son anónimos.
+    cognito_user_pool_id: str | None = None  # us-east-1_XXXXXXXXX
+    cognito_client_id: str | None = None
 
     web_dir: str = "/opt/ateneo/web"         # de dónde se sirve el sitio estático
     timeout_inferencia_s: float = 30.0
@@ -46,4 +50,6 @@ class Settings(BaseSettings):
             raise ValueError("modo http: falta INFERENCIA_URL")
         if self.modo_inferencia == "sqs" and not self.cola_inferencias_url:
             raise ValueError("modo sqs: falta COLA_INFERENCIAS_URL")
+        if bool(self.cognito_user_pool_id) != bool(self.cognito_client_id):
+            raise ValueError("Cognito: hacen falta COGNITO_USER_POOL_ID y COGNITO_CLIENT_ID, o ninguno")
         return self

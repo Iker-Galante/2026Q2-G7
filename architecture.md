@@ -290,14 +290,19 @@ class Despachador:
   (lo que se monta en `/` atrapa todo lo demás), y registra un manejador de `404` que fuera de
   `/api` devuelve `index.html`. Si `WEB_DIR` no existe (local sin build), no monta nada.
 - `GET /health` sin dependencias ni base; `GET /api/health` agrega `socket.gethostname()`.
-- Sin CORS en la API: sitio y API comparten origen. El CORS que sí existe es el de los dos buckets
+- Sin CORS en el backend. En local, sitio y API comparten origen; en AWS con Terraform el sitio
+  está en S3 y la API detrás de API Gateway, que es quien contesta el CORS. El de los dos buckets
   a los que el navegador sube directo —estudios y modelos—, para el `POST` prefirmado (guía §04 y
   §10). `infra/cors.sh <origen>` lo aplica a los dos.
 - **Las dos subidas son la misma pieza.** La imagen del estudio y el ONNX del modelo salen del
   navegador hacia S3 con un `presigned POST` firmado por la API, que ata el content type y el
   tamaño máximo; el archivo nunca atraviesa la capa de aplicación. `infraestructura/s3/comun.py`
   tiene la firma y el `head_object` que comparten los dos adaptadores.
-- Punto de extensión para autenticación: `Depends(usuario_actual)`, hoy `Usuario.anonimo()`.
+- Autenticación: `Depends(usuario_actual)`. Con `COGNITO_USER_POOL_ID` y `COGNITO_CLIENT_ID`
+  valida el access token de `Authorization: Bearer` contra las claves del user pool
+  (`infraestructura/cognito/verificador.py`, detrás del puerto `VerificadorTokens`) y devuelve el
+  `sub`; sin token o con uno inválido, `401 no_autenticado`. Sin esas variables (local, tests),
+  todos son anónimos. El login entero está en `terraform/README.md` («Login con Cognito»).
 
 ## 5. Worker
 
@@ -503,5 +508,5 @@ modelo a S3 → conjunto a S3 → lanzar `eval-1` → apretar **Publicar**.
 | Juntas de varios modelos | `EncolarInferencia` crea N trabajos; un caso de uso `Consensuar` agrega | Worker, evaluador |
 | DICOM | Un `DecodificadorImagen` más | Preprocesamiento, motor, métricas |
 | Segmentación | Un posprocesador y un calculador de métricas por `tarea` | Motor, worker, evaluador |
-| Autenticación | Implementar `usuario_actual` | Routers, casos de uso |
+| Roles (grupos de Cognito) | `usuario_actual` devuelve también los grupos del token; cada router pide el suyo | Casos de uso, login |
 | CloudFront (cuando se pueda) | Sacar el `mount` del sitio; `ORIGEN_WEB` pasa a ser el dominio de CloudFront | API, despachador, todo lo demás |

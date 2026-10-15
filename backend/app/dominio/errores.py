@@ -21,6 +21,11 @@ class EntradaInvalida(ErrorDominio):
     codigo = "entrada_invalida"
 
 
+class NoAutenticado(ErrorDominio):
+    """Falta el access token, venció o no es de nuestro user pool."""
+    codigo = "no_autenticado"
+
+
 class ServicioNoDisponible(ErrorDominio):
     """Fallo transitorio de un servicio externo (worker sin respuesta). Se reintenta."""
     codigo = "servicio_no_disponible"

@@ -1,5 +1,7 @@
+import { ingresar, salir } from "../api/sesion";
 import type { Salud } from "../api/tipos";
 import { Enlace } from "../enrutador";
+import { useSesion } from "../hooks/useSesion";
 import type { Tema } from "../hooks/useTema";
 import EstadoApi from "./EstadoApi";
 import Marca from "./Marca";
@@ -28,8 +30,10 @@ function IconoTema({ tema }: { tema: Tema }) {
   );
 }
 
-/** Barra superior: marca, las tres vistas, salud de la API y tema. */
+/** Barra superior: marca, las tres vistas, salud de la API, sesión y tema. */
 export default function Navegacion({ salud, consultado, tema, onAlternarTema }: Props) {
+  const { sesion, conLogin } = useSesion();
+
   return (
     <header className="barra">
       <div className="barra-interior">
@@ -46,6 +50,21 @@ export default function Navegacion({ salud, consultado, tema, onAlternarTema }: 
 
         <div className="barra-fin">
           <EstadoApi salud={salud} consultado={consultado} variante="compacto" />
+          {conLogin &&
+            (sesion ? (
+              <span className="sesion">
+                <span className="sesion-email" title={sesion.email ?? undefined}>
+                  {sesion.email ?? "Sesión iniciada"}
+                </span>
+                <button type="button" className="secundario chico" onClick={salir}>
+                  Salir
+                </button>
+              </span>
+            ) : (
+              <button type="button" className="secundario chico" onClick={ingresar}>
+                Ingresar
+              </button>
+            ))}
           <button
             type="button"
             className="boton-icono"

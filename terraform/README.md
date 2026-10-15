@@ -1,13 +1,16 @@
-# Ateneo como código: Terraform + SQS + SNS + Lambda
+# Ateneo como código: Terraform + SQS + SNS + Lambda + Cognito
 
 Toda la arquitectura de la guía «Ateneo paso a paso» (secciones 02 a 10 y 14) declarada en
-Terraform, más tres piezas nuevas que la hacen más robusta:
+Terraform, más las piezas nuevas que la hacen más robusta:
 
 | Pieza nueva | Para qué | Archivo |
 |-------------|----------|---------|
 | **SQS** `ateneo-inferencias` + DLQ | La cola interna de inferencias. Reemplaza a la tabla-cola con `SKIP LOCKED`, al despachador y al barrido de huérfanos | `cola.tf` |
 | **SNS** `ateneo-alertas` + alarmas de CloudWatch | Avisar por mail cuando un trabajo agota sus 3 intentos (DLQ), cuando la cola no avanza o cuando el backend se queda sin instancias sanas | `notificaciones.tf` |
 | **Lambda** `ateneo-guardian` + EventBridge | Red de seguridad del presupuesto: todas las noches apaga lo que haya quedado prendido y avisa por SNS | `guardian.tf`, `lambda/guardian.py` |
+| **Cognito** user pool + Hosted UI | Usuarios y login sin que la contraseña pase por nuestro código | `cognito.tf` |
+| **API Gateway** `ateneo` + **Lambda** `ateneo-callback` | La puerta HTTPS: el `/callback` del login y `/api/*` con el token validado | `api.tf`, `lambda/callback.py` |
+| **S3 sitio estático** (bucket web) | El frontend, servido por S3 y no por las instancias | `s3.tf` |
 
 Y lo que antes era a mano pasa a ser declarativo:
 
@@ -29,7 +32,12 @@ sin saber qué hay adentro del zip.
 
 ```mermaid
 flowchart LR
-  U[Navegador] -->|HTTP 80| ALB[alb-ateneo]
+  U[Navegador] -->|HTTP| WEB[(S3 sitio)]
+  U -->|login| COG[Cognito Hosted UI]
+  COG -->|/callback| GW
+  GW -.->|canje del código| LCB[Lambda callback]
+  U -->|HTTPS + access token| GW[API Gateway]
+  GW -->|token válido| ALB[alb-ateneo]
   ALB --> APP[asg-app<br/>backend + sitio]
   APP -->|POST prefirmado| S3E[(estudios)]
   APP -->|encola| Q[[SQS ateneo-inferencias]]
@@ -82,12 +90,45 @@ recrear nada más que el ALB interno y el endpoint.
   AWS la imagen dorada + zip cumple el mismo papel (dependencias fijas, código descartable), y
   pasar a ECS cambiaría el modelo de despliegue entero sin sumar robustez a esta entrega.
 
+## Login con Cognito
+
+El recorrido de la clase, paso por paso, y dónde vive cada uno:
+
+| # | Qué pasa | Dónde |
+|---|----------|-------|
+| 1 | El usuario abre el sitio en S3, por HTTP | `s3.tf` (bucket web como sitio estático) |
+| 2 | «Ingresar» redirige al Hosted UI de Cognito con un `state` al azar | `frontend/src/api/sesion.ts` → `ingresar()` |
+| 3 | Cognito vuelve a `GET /callback` de API Gateway, que es HTTPS | `cognito.tf` (`callback_urls`), `api.tf` |
+| 4 | La Lambda canjea el código por los tokens en `/oauth2/token` (con el secreto del cliente) y redirige a `http://<sitio>/#access_token=…&id_token=…` | `lambda/callback.py` |
+| 5 | El sitio lee los tokens del fragmento, comprueba el `state`, los guarda en `localStorage` y limpia la URL | `sesion.ts` → `recibirDelCallback()` |
+| 6 | Cada pedido lleva `Authorization: Bearer <access token>`. API Gateway lo valida (autorizador JWT) y el backend lo vuelve a validar | `frontend/src/api/cliente.ts`, `api.tf`, `backend/app/infraestructura/cognito/` |
+
+- **Por qué el callback no va directo al sitio.** Cognito solo acepta callbacks HTTPS (salvo
+  `localhost`), y el sitio de S3 es HTTP: sin CloudFront ni dominio propio no hay forma de
+  ponerle un certificado. API Gateway sí trae uno. Además, en una página HTTP el navegador no
+  expone `crypto.subtle`, así que el sitio tampoco podría hacer PKCE por su cuenta.
+- **Por qué la API también pasa por API Gateway.** Así el token viaja siempre por HTTPS desde el
+  navegador y un pedido sin token válido no llega al backend. El ALB sigue siendo público (el
+  tramo API Gateway → ALB es HTTP), por eso el backend valida el token otra vez con las claves
+  públicas del user pool. `/api/health` es la única ruta sin token.
+- **Qué guarda el navegador.** Access e id token, una hora. No hay refresh token en la URL: al
+  vencer, «Ingresar» vuelve a pasar por Cognito, que recuerda la sesión y no pide la contraseña.
+- **El sitio no tiene direcciones escritas.** Terraform deja `config.json` en el bucket web
+  (API Gateway, dominio de Cognito, cliente). En local no existe, y el sitio anda como antes:
+  API en el mismo origen y sin login.
+- **Cuentas.** Cualquiera se registra desde el Hosted UI con su email (Cognito manda el código de
+  verificación; con su remitente, hasta 50 mails por día). Para crear uno a mano:
+  `aws cognito-idp admin-create-user --user-pool-id $(bash terraform/scripts/tf.sh output -raw cognito_user_pool) --username vos@mail.com`.
+
 ## Restricciones del Learner Lab que este código respeta
 
 - **No crea roles ni usuarios de IAM.** Las instancias usan `LabInstanceProfile`, la Lambda
   usa `LabRole` (los dos se leen con `data`).
 - **Sin `instance_refresh`** en los grupos (lo bloquea la SCP): se sigue usando `refrescar.sh`.
-- **Sin CloudFront ni EC2 Instance Connect Endpoint** (no concedidos).
+- **Sin CloudFront ni EC2 Instance Connect Endpoint** (no concedidos). Por eso el sitio es HTTP
+  y el HTTPS lo pone API Gateway (ver «Login con Cognito»).
+- **La Lambda del callback usa `LabRole`**, como el guardián, y API Gateway la invoca con un
+  permiso basado en recurso.
 - **Credenciales de sesión:** se corre desde CloudShell, donde ya están puestas. No hay ninguna
   clave en el código ni en las variables.
 - **El giga de CloudShell:** el proveedor de AWS ocupa unos 850 MB; `scripts/tf.sh` lo deja en
@@ -118,9 +159,15 @@ bash terraform/scripts/tf.sh apply
 bash terraform/scripts/tf.sh output url
 ```
 
+`url` es el sitio en S3. Abrilo, apretá «Ingresar» y creá una cuenta en el Hosted UI de Cognito.
+
 Después, igual que la guía §15: aplicar `migraciones/001_inicial.sql` desde una instancia app
 por Session Manager, subir el modelo y el conjunto reservado, y apretar «Publicar». Si pusiste
 un mail, AWS te manda una confirmación de SNS que hay que aceptar.
+
+**Si ya tenías el entorno levantado sin Cognito:** un `apply` crea el login y escribe el
+`backend.env` con el user pool, pero las instancias leen el `.env` solo al arrancar:
+`bash infra/refrescar.sh asg-app` para que el backend empiece a pedir el token.
 
 ## Un equipo de varias personas
 
@@ -145,14 +192,16 @@ Learner Lab es una cuenta de AWS distinta, así que:
 |-----|---------|
 | Antes de End Lab | `bash terraform/scripts/tf.sh apply -var encendido=false` |
 | Al volver | `bash terraform/scripts/tf.sh apply` |
-| Cambió el backend o el frontend | `bash infra/desplegar.sh backend` (o `frontend`) · `bash infra/refrescar.sh asg-app` |
+| Cambió el backend | `bash infra/desplegar.sh backend` · `bash infra/refrescar.sh asg-app` |
+| Cambió el frontend | `bash infra/desplegar.sh frontend` (sin refrescar: lo sirve S3) |
 | Cambió el worker o `ateneo_ml` | `bash infra/desplegar.sh worker` · `bash infra/refrescar.sh asg-inf` · `bash terraform/scripts/tf.sh apply -replace='aws_instance.eval[0]'` |
 | Ver qué cambiaría | `bash terraform/scripts/tf.sh plan` |
 | Fin del curso | `permitir_borrar_buckets = true` en tfvars · `apply` · `destroy` |
 
 `encendido = false` borra el NAT y los dos balanceadores, pone los grupos en 0, termina
-`eval-1` y detiene la base. Al prender, los balanceadores nacen con otro DNS: Terraform vuelve
-a escribir los `.env` y el CORS de los buckets con el nuevo. **Cada `apply` sin
+`eval-1` y detiene la base. El sitio, Cognito y la Lambda del callback quedan (no cuestan nada
+quietos); API Gateway pierde las rutas `/api/*`. Al prender, el ALB nace con otro DNS: Terraform
+vuelve a apuntar API Gateway al nuevo. La dirección del sitio y la de API Gateway no cambian. **Cada `apply` sin
 `-var encendido=false` prende todo**, así que el comando de apagar es el único que lleva la
 variable.
 
@@ -165,7 +214,7 @@ que apagó. AWS vuelve a prender la base sola a los 7 días; el guardián la det
 cd terraform
 terraform init -backend=false
 terraform validate
-terraform test          # 4 planes contra un AWS simulado: modo http, modo sqs, apagado, imagen
+terraform test          # 5 planes contra un AWS simulado: modo http, modo sqs, login, apagado, imagen
 ```
 
 ## Cómo funciona el modo sqs en el código

@@ -83,6 +83,33 @@
   gap: 0.9rem;
 }
 
+/* Sesión de Cognito, en la barra */
+
+.sesion {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.sesion-email {
+  font-size: 13.5px;
+  color: var(--texto-suave);
+  max-width: 16rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+button.chico {
+  padding: 0.3rem 0.8rem;
+  font-size: 0.86rem;
+}
+
+.aviso-ingreso {
+  max-width: var(--ancho);
+  margin: 1.5rem auto 0;
+}
+
 /* Pie */
 
 .pie {
@@ -464,6 +491,10 @@
 
   .barra-fin {
     gap: 0.5rem;
+  }
+
+  .sesion-email {
+    display: none;
   }
 
   .pie-interior {

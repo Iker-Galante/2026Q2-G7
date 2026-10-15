@@ -5,7 +5,8 @@
 #
 #   bash infra/desplegar.sh backend    → backend-latest.zip   · después: refrescar.sh asg-app
 #   bash infra/desplegar.sh worker     → worker-latest.zip    · después: refrescar.sh asg-inf  (y relanzar eval-1)
-#   bash infra/desplegar.sh frontend   → build al bucket web  · después: refrescar.sh asg-app
+#   bash infra/desplegar.sh frontend   → build al bucket web  · con Terraform ya está en el aire
+#                                                              (sitio de S3); a mano: refrescar.sh asg-app
 #   bash infra/desplegar.sh todo
 set -euo pipefail
 export AWS_PAGER=""
@@ -39,9 +40,10 @@ worker() {
 
 frontend() {
   (cd frontend && { npm ci || npm install; } && npm run build)
-  aws s3 sync frontend/dist/ "s3://$BUCKET_WEB/" --delete
+  # config.json no sale del build: lo escribe Terraform (API Gateway y Cognito). --delete no lo toca.
+  aws s3 sync frontend/dist/ "s3://$BUCKET_WEB/" --delete --exclude config.json
   rm -rf frontend/node_modules          # el giga de CloudShell
-  echo "frontend subido · ahora: bash infra/refrescar.sh asg-app"
+  echo "frontend subido · con Terraform ya está en el aire; con la guía a mano: bash infra/refrescar.sh asg-app"
 }
 
 case "$QUE" in

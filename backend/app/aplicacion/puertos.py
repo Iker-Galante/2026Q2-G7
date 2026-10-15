@@ -113,3 +113,7 @@ class ColaInferencias(Protocol):
 
 class Reloj(Protocol):
     def ahora(self) -> datetime: ...
+
+
+class VerificadorTokens(Protocol):
+    def verificar(self, token: str) -> str: ...     # el sub del usuario · NoAutenticado | ServicioNoDisponible

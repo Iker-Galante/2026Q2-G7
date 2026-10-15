@@ -13,7 +13,7 @@ os.environ.setdefault("WEB_DIR", "/no/existe")   # sin sitio estático en los te
 from app.aplicacion.casos_uso.modelos import SubidaModelo  # noqa: E402
 from app.aplicacion.puertos import SubidaFirmada  # noqa: E402
 from app.api import dependencias  # noqa: E402
-from app.dominio.errores import Conflicto, NoEncontrado  # noqa: E402
+from app.dominio.errores import Conflicto, NoAutenticado, NoEncontrado  # noqa: E402
 from app.dominio.modelo import Modelo  # noqa: E402
 from app.dominio.trabajo import Trabajo  # noqa: E402
 from app.main import crear_app  # noqa: E402
@@ -42,8 +42,21 @@ class CasoFalso:
 @pytest.fixture
 def cliente():
     app = crear_app()
+    app.dependency_overrides[dependencias.dep_verificador] = lambda: None   # sin Cognito: anónimo
     yield app, TestClient(app)
     app.dependency_overrides.clear()
+
+
+class VerificadorFalso:
+    """Acepta solo el token "bueno"; cualquier otro es NoAutenticado, como un JWT vencido."""
+    def __init__(self):
+        self.vistos = []
+
+    def verificar(self, token):
+        self.vistos.append(token)
+        if token != "bueno":
+            raise NoAutenticado("token inválido")
+        return "sub-123"
 
 
 def test_health(cliente):
@@ -131,3 +144,33 @@ def test_ruta_desconocida_bajo_api_es_404_json(cliente):
     _, c = cliente
     r = c.get("/api/nada")
     assert r.status_code == 404
+
+def test_con_cognito_sin_token_es_401(cliente):
+    app, c = cliente
+    app.dependency_overrides[dependencias.dep_verificador] = lambda: VerificadorFalso()
+    app.dependency_overrides[dependencias.dep_listar_modelos] = lambda: CasoFalso(resultado=[])
+    r = c.get("/api/modelos")
+    assert r.status_code == 401 and r.json()["error"] == "no_autenticado"
+
+
+def test_con_cognito_token_invalido_es_401(cliente):
+    app, c = cliente
+    verificador = VerificadorFalso()
+    app.dependency_overrides[dependencias.dep_verificador] = lambda: verificador
+    app.dependency_overrides[dependencias.dep_listar_modelos] = lambda: CasoFalso(resultado=[])
+    r = c.get("/api/modelos", headers={"Authorization": "Bearer vencido"})
+    assert r.status_code == 401 and verificador.vistos == ["vencido"]
+
+
+def test_con_cognito_token_valido_pasa(cliente):
+    app, c = cliente
+    app.dependency_overrides[dependencias.dep_verificador] = lambda: VerificadorFalso()
+    app.dependency_overrides[dependencias.dep_listar_modelos] = lambda: CasoFalso(resultado=[])
+    r = c.get("/api/modelos", headers={"Authorization": "Bearer bueno"})
+    assert r.status_code == 200 and r.json() == []
+
+
+def test_health_no_pide_token(cliente):
+    app, c = cliente
+    app.dependency_overrides[dependencias.dep_verificador] = lambda: VerificadorFalso()
+    assert c.get("/api/health").status_code == 200

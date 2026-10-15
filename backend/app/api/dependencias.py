@@ -12,7 +12,7 @@ from dataclasses import dataclass
 
 import boto3
 from botocore.config import Config as BotoConfig
-from fastapi import Request
+from fastapi import Depends, Request
 
 from ..aplicacion.casos_uso.estudios import CrearEstudio
 from ..aplicacion.casos_uso.inferencias import (
@@ -22,8 +22,11 @@ from ..aplicacion.casos_uso.modelos import (
     ConsultarModelo, ListarModelos, ListarModelosDisponibles, PrepararSubidaModelo, PublicarModelo,
 )
 from ..aplicacion.despachador import Despachador
+from ..aplicacion.puertos import VerificadorTokens
 from ..aplicacion.reenviador import Reenviador
 from ..config import Settings
+from ..dominio.errores import NoAutenticado
+from ..infraestructura.cognito.verificador import VerificadorCognito
 from ..infraestructura.http.cliente_inferencia import ClienteInferenciaHttp
 from ..infraestructura.postgres.conexion import crear_pool
 from ..infraestructura.postgres.repositorios import (
@@ -49,6 +52,7 @@ class Contenedor:
     despachador: Despachador | Reenviador      # el bucle de fondo: uno u otro según el modo
     pool: object
     cliente_inferencia: ClienteInferenciaHttp | None
+    verificador: VerificadorTokens | None      # None = sin Cognito: todos anónimos
 
     def abrir(self) -> None:
         self.pool.open()          # type: ignore[attr-defined]
@@ -91,6 +95,11 @@ def armar(settings: Settings) -> Contenedor:
         fondo = Despachador(trabajos, despachar, settings.intervalo_despacho_s,
                             settings.max_intentos, settings.huerfanos_minutos)
 
+    verificador = None
+    if settings.cognito_user_pool_id and settings.cognito_client_id:
+        verificador = VerificadorCognito(settings.aws_region, settings.cognito_user_pool_id,
+                                         settings.cognito_client_id)
+
     return Contenedor(
         settings=settings,
         listar_disponibles=ListarModelosDisponibles(catalogo, modelos),
@@ -105,6 +114,7 @@ def armar(settings: Settings) -> Contenedor:
         despachador=fondo,
         pool=pool,
         cliente_inferencia=cliente,
+        verificador=verificador,
     )
 
 
@@ -146,6 +156,15 @@ def dep_consultar_trabajo(request: Request) -> ConsultarTrabajo:
     return contenedor(request).consultar_trabajo
 
 
-def usuario_actual() -> str:
-    """Punto de extensión para autenticación. Hoy todos son anónimos."""
-    return "anonimo"
+def dep_verificador(request: Request) -> VerificadorTokens | None:
+    return contenedor(request).verificador
+
+
+def usuario_actual(request: Request, verificador: VerificadorTokens | None = Depends(dep_verificador)) -> str:
+    """El sub del access token de Cognito (Authorization: Bearer …). Sin Cognito, anónimo."""
+    if verificador is None:
+        return "anonimo"
+    tipo, _, token = request.headers.get("authorization", "").partition(" ")
+    if tipo.lower() != "bearer" or not token.strip():
+        raise NoAutenticado("falta el token: ingresá de nuevo")
+    return verificador.verificar(token.strip())

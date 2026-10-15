@@ -45,6 +45,24 @@ mock_provider "aws" {
   mock_resource "aws_sns_topic" {
     defaults = { arn = "arn:aws:sns:us-east-1:123456789012:ateneo-alertas" }
   }
+  mock_resource "aws_s3_bucket_website_configuration" {
+    defaults = { website_endpoint = "ateneo-web-prueba.s3-website-us-east-1.amazonaws.com" }
+  }
+  mock_resource "aws_apigatewayv2_api" {
+    defaults = {
+      api_endpoint  = "https://abc123.execute-api.us-east-1.amazonaws.com"
+      execution_arn = "arn:aws:execute-api:us-east-1:123456789012:abc123"
+    }
+  }
+  mock_resource "aws_cognito_user_pool" {
+    defaults = {
+      id       = "us-east-1_prueba"
+      endpoint = "cognito-idp.us-east-1.amazonaws.com/us-east-1_prueba"
+    }
+  }
+  mock_resource "aws_cognito_user_pool_client" {
+    defaults = { id = "cliente123", client_secret = "secreto" }
+  }
 }
 
 mock_provider "random" {}
@@ -107,6 +125,39 @@ run "sqs_encendido" {
   }
 }
 
+run "login_con_cognito" {
+  command = apply
+
+  assert {
+    condition     = contains(aws_cognito_user_pool_client.web.callback_urls, "https://abc123.execute-api.us-east-1.amazonaws.com/callback")
+    error_message = "Cognito tiene que volver al /callback de API Gateway (HTTPS), no al sitio."
+  }
+  assert {
+    condition     = aws_lambda_function.callback.environment[0].variables.URL_SITIO == "http://ateneo-web-prueba.s3-website-us-east-1.amazonaws.com"
+    error_message = "La Lambda del callback tiene que redirigir al sitio en S3."
+  }
+  assert {
+    condition     = jsondecode(aws_s3_object.config_web.content).cognito.callback == aws_lambda_function.callback.environment[0].variables.URL_CALLBACK
+    error_message = "El sitio y la Lambda tienen que usar el mismo redirect_uri, o Cognito rechaza el canje."
+  }
+  assert {
+    condition     = aws_apigatewayv2_route.backend["POST /api/{proxy+}"].authorization_type == "JWT" && aws_apigatewayv2_route.backend["GET /api/health"].authorization_type == "NONE"
+    error_message = "La API pide token salvo /api/health."
+  }
+  assert {
+    condition     = strcontains(aws_s3_object.env["backend"].content, "COGNITO_CLIENT_ID=cliente123")
+    error_message = "El backend tiene que recibir el cliente de Cognito para validar el token."
+  }
+  assert {
+    condition     = !strcontains(aws_s3_object.env["backend"].content, "secreto")
+    error_message = "El secreto del cliente es solo de la Lambda."
+  }
+  assert {
+    condition     = aws_s3_bucket_public_access_block.b["web"].block_public_policy == false && aws_s3_bucket_public_access_block.b["modelos"].block_public_policy == true
+    error_message = "Solo el bucket web es público."
+  }
+}
+
 run "apagado" {
   command = apply
   variables {
@@ -124,6 +175,10 @@ run "apagado" {
   assert {
     condition     = aws_rds_instance_state.ateneo.state == "stopped" && length(aws_instance.eval) == 0
     error_message = "Apagado: base detenida y eval-1 terminada."
+  }
+  assert {
+    condition     = length(aws_apigatewayv2_route.backend) == 0 && length(aws_apigatewayv2_route.login) == 2
+    error_message = "Apagado: sin rutas al backend, pero el login sigue en pie."
   }
 }
 

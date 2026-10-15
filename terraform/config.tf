@@ -4,7 +4,6 @@
 # (bucket privado y cifrado) y en estos objetos, nunca en un user data ni en el repositorio.
 
 locals {
-  alb_dns     = var.encendido ? aws_lb.app[0].dns_name : ""
   alb_int_dns = var.encendido && local.http ? aws_lb.inf[0].dns_name : ""
 
   env_backend = {
@@ -14,9 +13,12 @@ locals {
     BUCKET_ESTUDIOS = local.buckets.estudios
     # El backend de hoy la exige. En modo sqs no hay ALB interno y la que manda es la cola.
     INFERENCIA_URL       = local.alb_int_dns != "" ? "http://${local.alb_int_dns}:8081" : "http://sin-alb-interno.invalid:8081"
-    ORIGEN_WEB           = local.alb_dns != "" ? "http://${local.alb_dns}" : ""
+    ORIGEN_WEB           = local.url_sitio
     MODO_INFERENCIA      = var.modo_inferencia
     COLA_INFERENCIAS_URL = aws_sqs_queue.inferencias.url
+    # El backend vuelve a validar el access token: al ALB se puede llegar sin pasar por API Gateway.
+    COGNITO_USER_POOL_ID = aws_cognito_user_pool.ateneo.id
+    COGNITO_CLIENT_ID    = aws_cognito_user_pool_client.web.id
   }
 
   env_worker = merge(
@@ -54,10 +56,28 @@ resource "aws_s3_object" "env" {
   content_type = "text/plain"
 }
 
+# Lo que el sitio necesita saber de la infraestructura, en el bucket web al lado del index.html.
+# El build del frontend no lleva ninguna dirección: la lee de acá al arrancar, así que
+# desplegar.sh frontend no depende del estado de Terraform (y no borra este archivo).
+resource "aws_s3_object" "config_web" {
+  bucket        = aws_s3_bucket.b["web"].id
+  key           = "config.json"
+  content_type  = "application/json"
+  cache_control = "no-cache"
+  content = jsonencode({
+    api = local.url_api
+    cognito = {
+      dominio   = local.cognito_dominio
+      clienteId = aws_cognito_user_pool_client.web.id
+      callback  = local.url_callback
+      logout    = local.url_logout
+    }
+  })
+}
+
 locals {
   userdata_app = templatefile("${path.module}/plantillas/lt-app.sh.tftpl", {
     bucket_deploy = local.buckets.deploy
-    bucket_web    = local.buckets.web
   })
 
   userdata_worker = templatefile("${path.module}/plantillas/lt-worker.sh.tftpl", {

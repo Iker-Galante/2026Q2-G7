@@ -1,6 +1,11 @@
+import { configuracion } from "./configuracion";
+import { descartarSesion, tokenDeAcceso } from "./sesion";
 import type { CuerpoError } from "./tipos";
 
-const BASE = "/api";
+/** En AWS, API Gateway (otro origen, HTTPS); en local, el mismo origen del sitio. */
+function base(): string {
+  return `${configuracion().api}/api`;
+}
 
 /**
  * Error de la API. `status` es el HTTP, `error` el código que manda el backend
@@ -43,13 +48,24 @@ async function leerError(respuesta: Response): Promise<ErrorApi> {
   );
 }
 
-async function pedir<T>(ruta: string, init?: RequestInit): Promise<T> {
+async function pedir<T>(ruta: string, init: RequestInit = {}): Promise<T> {
+  // Paso 6 del login: el access token de Cognito en cada pedido. API Gateway lo
+  // valida antes de reenviar al backend, y el backend lo vuelve a validar.
+  const headers = new Headers(init.headers);
+  const token = tokenDeAcceso();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+
   let respuesta: Response;
   try {
-    respuesta = await fetch(BASE + ruta, init);
+    respuesta = await fetch(base() + ruta, { ...init, headers });
   } catch (e) {
     const motivo = e instanceof Error ? e.message : String(e);
     throw new ErrorApi(0, "red", `No se pudo conectar con la API (${motivo})`);
+  }
+  if (respuesta.status === 401) {
+    // Vencido o inválido: la pantalla vuelve a pedir el ingreso.
+    descartarSesion();
+    throw new ErrorApi(401, "no_autenticado", "Tu sesión venció. Ingresá de nuevo para seguir.");
   }
   if (!respuesta.ok) throw await leerError(respuesta);
   // 204 sin cuerpo: devolvemos undefined tipado como T.
