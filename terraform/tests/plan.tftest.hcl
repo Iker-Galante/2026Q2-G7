@@ -145,6 +145,25 @@ run "computo" {
     error_message = "El evaluador pasa de 0 a 1 tarea según su cola."
   }
   assert {
+    condition     = one(aws_ecs_cluster.ateneo.setting).name == "containerInsights" && one(aws_ecs_cluster.ateneo.setting).value == "enabled"
+    error_message = "Container Insights publica RunningTaskCount, el divisor del backlog por tarea."
+  }
+  assert {
+    condition     = keys(aws_appautoscaling_policy.backlog) == ["procesador", "worker"]
+    error_message = "worker y procesador escalan por backlog por tarea."
+  }
+  assert {
+    condition = alltrue([
+      for p in aws_appautoscaling_policy.backlog :
+      one([for m in p.target_tracking_scaling_policy_configuration[0].customized_metric_specification[0].metrics : m if m.return_data]).expression == "esperando / tareas"
+    ])
+    error_message = "El backlog por tarea es mensajes esperando ÷ tareas corriendo."
+  }
+  assert {
+    condition     = keys(aws_appautoscaling_policy.crecer) == ["evaluador"] && aws_appautoscaling_policy.crecer["evaluador"].step_scaling_policy_configuration[0].adjustment_type == "ExactCapacity"
+    error_message = "Solo el evaluador escala por escalones: target tracking no arranca de cero tareas."
+  }
+  assert {
     condition     = strcontains(aws_ecs_task_definition.s["api"].container_definitions, ":${output.version_codigo}")
     error_message = "Las imágenes llevan el hash del código como etiqueta."
   }
@@ -184,8 +203,15 @@ run "login_de_la_clase" {
     error_message = "Cuatro grupos y la Lambda de post-confirmación que asigna el grupo."
   }
   assert {
-    condition     = aws_apigatewayv2_route.api["POST /api/{proxy+}"].authorization_type == "JWT" && aws_apigatewayv2_route.api["GET /api/health"].authorization_type == "NONE"
-    error_message = "La API pide token salvo /api/health."
+    condition = alltrue([
+      for ruta, tipo in {
+        "GET /api/health"           = "NONE"
+        "GET /api/publico/{proxy+}" = "NONE"
+        "GET /api/{proxy+}"         = "JWT"
+        "POST /api/{proxy+}"        = "JWT"
+      } : aws_apigatewayv2_route.api[ruta].authorization_type == tipo
+    ]) && length(aws_apigatewayv2_route.api) == 4
+    error_message = "La API pide token salvo /api/health y el catálogo de /api/publico/."
   }
   assert {
     condition     = aws_apigatewayv2_integration.alb.connection_type == "VPC_LINK"
@@ -194,6 +220,13 @@ run "login_de_la_clase" {
   assert {
     condition     = aws_s3_bucket_public_access_block.b["web"].block_public_policy == false && alltrue([for k in ["modelos", "estudios", "evaluacion", "artefactos"] : aws_s3_bucket_public_access_block.b[k].block_public_policy])
     error_message = "Solo el bucket web (el sitio) es público."
+  }
+  assert {
+    condition = length(aws_s3_bucket_server_side_encryption_configuration.b) == 5 && alltrue([
+      for c in aws_s3_bucket_server_side_encryption_configuration.b :
+      one(one(c.rule).apply_server_side_encryption_by_default).sse_algorithm == "AES256"
+    ])
+    error_message = "Los cinco buckets declaran el cifrado en reposo, no lo heredan del valor por defecto."
   }
 }
 
@@ -211,5 +244,27 @@ run "sin_waf_con_admin" {
   assert {
     condition     = length(aws_cognito_user_in_group.admin) == 1 && aws_cognito_user_in_group.admin[0].group_name == "admin_plataforma"
     error_message = "El admin inicial se crea con Terraform, en admin_plataforma."
+  }
+}
+
+# El repliegue de la sección 12: si el lab no permite Container Insights, no hay divisor y los
+# tres servicios de cola vuelven a escalones sobre los mensajes visibles.
+run "sin_container_insights" {
+  command = apply
+  variables {
+    container_insights = false
+  }
+
+  assert {
+    condition     = one(aws_ecs_cluster.ateneo.setting).value == "disabled" && length(aws_appautoscaling_policy.backlog) == 0
+    error_message = "container_insights = false apaga Container Insights y el backlog por tarea."
+  }
+  assert {
+    condition     = keys(aws_appautoscaling_policy.crecer) == ["evaluador", "procesador", "worker"]
+    error_message = "Sin divisor, los tres servicios de cola escalan por escalones."
+  }
+  assert {
+    condition     = aws_cloudwatch_metric_alarm.cola_con_trabajo["worker"].threshold == 10
+    error_message = "El umbral del worker sigue siendo mensajes_por_worker."
   }
 }

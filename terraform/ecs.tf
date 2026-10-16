@@ -2,8 +2,8 @@
 #
 #   servicio     imagen   subred       tareas   CPU · memoria   escala por                       entrada
 #   api          backend  aplicación   2 a 4    0,5 · 1 GB      CPU al 60 %                      8080, solo desde el ALB
-#   procesador   backend  aplicación   1 a 2    0,25 · 0,5 GB   mensajes en resultados           ninguna
-#   worker       ml       inferencia   1 a 4    1 · 2 GB        mensajes en inferencias          ninguna
+#   procesador   backend  aplicación   1 a 2    0,25 · 0,5 GB   resultados por tarea             ninguna
+#   worker       ml       inferencia   1 a 4    1 · 2 GB        inferencias por tarea            ninguna
 #   evaluador    ml       evaluación   0 a 1    2 · 4 GB        hay mensajes en evaluaciones     ninguna
 #
 # Solo api y procesador reciben DATABASE_URL (de Secrets Manager). Cuando cambia la imagen, ECS
@@ -12,9 +12,13 @@
 resource "aws_ecs_cluster" "ateneo" {
   name = "ateneo"
 
+  # Publica RunningTaskCount, que es el divisor del backlog por tarea con el que escalan worker
+  # y procesador (escalado.tf). Es la única fuente de esa métrica: sin Container Insights no hay
+  # por qué dividir. Se paga por métrica y por log de rendimiento, centavos en una sesión de
+  # trabajo, y la regla de uso es destruir todo al terminarla.
   setting {
     name  = "containerInsights"
-    value = "disabled" # cuesta; los logs y las métricas de SQS alcanzan
+    value = var.container_insights ? "enabled" : "disabled"
   }
 }
 

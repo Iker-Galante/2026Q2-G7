@@ -2,6 +2,7 @@
 # certificado de AWS sin dominio propio, valida el token de Cognito y limita la tasa.
 #   GET /callback, GET /logout → Lambda: los pasos 3 y 4 del login de la clase (cognito.tf)
 #   GET /api/health            → VPC Link → ALB interno, sin token
+#   GET /api/publico/{proxy+}  → el catálogo, sin token: el Visitante de la spec
 #   GET|POST /api/{proxy+}     → VPC Link → ALB interno, con el access token validado
 
 resource "aws_apigatewayv2_api" "ateneo" {
@@ -92,11 +93,15 @@ resource "aws_apigatewayv2_authorizer" "cognito" {
 }
 
 locals {
-  # ruta => ¿pide token?
+  # ruta => ¿pide token? API Gateway elige la ruta con más segmentos literales antes que la
+  # greedy, así que /api/publico/… entra sin token y todo el resto de /api/* lo sigue pidiendo.
+  # El catálogo es lo único público (sección 09): el backend lo sirve bajo ese prefijo y nada
+  # más cuelga de ahí.
   rutas_api = {
-    "GET /api/health"    = false
-    "GET /api/{proxy+}"  = true
-    "POST /api/{proxy+}" = true
+    "GET /api/health"           = false
+    "GET /api/publico/{proxy+}" = false
+    "GET /api/{proxy+}"         = true
+    "POST /api/{proxy+}"        = true
   }
 }
 

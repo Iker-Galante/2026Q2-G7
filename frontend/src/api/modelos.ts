@@ -3,18 +3,22 @@ import type {
   Modelo, ModeloDisponible, SolicitudPublicar, SolicitudSubidaModelo, SubidaModeloCreada,
 } from "./tipos";
 
-/** Modelos presentes en el bucket, publicados o no. */
+/** Modelos presentes en el bucket, publicados o no. Es del publicador: pide token. */
 export function listarDisponibles(): Promise<ModeloDisponible[]> {
   return get<ModeloDisponible[]>("/modelos/disponibles");
 }
 
-/** Modelos publicados, del más nuevo al más viejo. */
+/**
+ * El catálogo: modelos publicados, del más nuevo al más viejo. Cuelga de /publico porque
+ * se ve sin ingresar, que es el único prefijo que API Gateway deja pasar sin token.
+ */
 export function listarPublicados(): Promise<Modelo[]> {
-  return get<Modelo[]>("/modelos");
+  return get<Modelo[]>("/publico/modelos");
 }
 
+/** La ficha de un modelo del catálogo; también pública. */
 export function obtener(id: string): Promise<Modelo> {
-  return get<Modelo>(`/modelos/${encodeURIComponent(id)}`);
+  return get<Modelo>(`/publico/modelos/${encodeURIComponent(id)}`);
 }
 
 /**

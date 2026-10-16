@@ -10,6 +10,7 @@ incluidos. Quien lo corre no necesita Docker.
 | Endpoint Gateway de S3 y cuatro de interfaz (`ecr.api`, `ecr.dkr`, `logs`, `sqs`) en subredes propias | `red.tf` |
 | Grupos de seguridad encadenados; procesador, worker, evaluador y constructor sin entrada | `seguridad.tf` |
 | API Gateway (HTTP API, HTTPS) → VPC Link → ALB interno + WAF | `api.tf`, `balanceador.tf` |
+| El autorizador JWT en todo `/api/*` salvo `/api/health` y `/api/publico/*`, que es el catálogo que ve el Visitante | `api.tf`, `backend/app/api/rutas/publico.py` |
 | Cognito: cuatro grupos, Hosted UI, Lambda de post-confirmación, admin inicial | `cognito.tf` |
 | El login de la clase: sitio en S3 y Lambda en `/callback` | `cognito.tf`, `api.tf`, `lambda/` |
 | ECS Fargate: api, procesador, worker, evaluador | `ecs.tf`, `escalado.tf` |
@@ -101,6 +102,7 @@ este, con el sitio en S3 (cambia también la decisión 11).
 | VPC Link de HTTP API hacia un ALB interno | ALB público que solo acepte un encabezado secreto que agrega API Gateway |
 | Servicios de Fargate (rol vinculado de ECS) y el escalado de Application Auto Scaling | Las mismas imágenes sobre EC2 con Auto Scaling |
 | Cuota de vCPU de Fargate (todo escalado son 8,5 vCPU) | Bajar tamaños y máximos en `ecs.tf` |
+| Container Insights en el cluster (publica `RunningTaskCount`, el divisor del backlog por tarea) | `container_insights = false`: worker y procesador escalan por escalones sobre los mensajes visibles |
 | WAF asociado a un ALB | `waf_activo = false` |
 | Disparador Lambda de Cognito | El backend asigna el grupo en la primera llamada |
 | Push a ECR desde EC2 con `LabInstanceProfile` | Construir con Docker en la máquina de quien corre Terraform |

@@ -10,6 +10,21 @@ resource "aws_s3_bucket" "b" {
   tags          = { Name = each.value, Rol = each.key }
 }
 
+# El cifrado en reposo, escrito y no heredado del valor por defecto de la cuenta. AWS cifra con
+# SSE-S3 todo objeto nuevo desde enero de 2023, así que esto no cambia nada en ejecución: lo que
+# cambia es que se ve en el plan y en la consola. La devolución de la E2 pidió que lo guardado en
+# un bucket esté cifrado, y una afirmación así no puede quedar apoyada en un valor por defecto.
+resource "aws_s3_bucket_server_side_encryption_configuration" "b" {
+  for_each = aws_s3_bucket.b
+  bucket   = each.value.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
 resource "aws_s3_bucket_public_access_block" "b" {
   for_each           = aws_s3_bucket.b
   bucket             = each.value.id

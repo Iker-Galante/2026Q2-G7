@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { mensajeDeError } from "../api/cliente";
 import { listarDisponibles, listarPublicados } from "../api/modelos";
 import type { Modelo, ModeloDisponible } from "../api/tipos";
+import { useSesion } from "./useSesion";
 
 export interface EstadoModelos {
   publicados: Modelo[];
@@ -14,8 +15,15 @@ export interface EstadoModelos {
   actualizarModelo: (modelo: Modelo) => void;
 }
 
-/** Carga los modelos publicados y los disponibles en el bucket. */
+/**
+ * Carga el catálogo y, si hay sesión, los modelos disponibles en el bucket.
+ *
+ * El catálogo es público, así que la portada lo muestra a quien no ingresó. Lo del bucket pide
+ * token: pedirlo sin sesión devolvía 401 y la portada se llenaba de «tu sesión venció».
+ */
 export function useModelos(): EstadoModelos {
+  const { sesion, conLogin } = useSesion();
+  const conSesion = !conLogin || sesion !== null;
   const [publicados, setPublicados] = useState<Modelo[]>([]);
   const [disponibles, setDisponibles] = useState<ModeloDisponible[]>([]);
   const [cargando, setCargando] = useState(true);
@@ -33,7 +41,10 @@ export function useModelos(): EstadoModelos {
     setCargando(true);
     setError(null);
     try {
-      const [p, d] = await Promise.all([listarPublicados(), listarDisponibles()]);
+      const [p, d] = await Promise.all([
+        listarPublicados(),
+        conSesion ? listarDisponibles() : Promise.resolve<ModeloDisponible[]>([]),
+      ]);
       if (!montado.current) return;
       setPublicados(p);
       setDisponibles(d);
@@ -43,7 +54,7 @@ export function useModelos(): EstadoModelos {
     } finally {
       if (montado.current) setCargando(false);
     }
-  }, []);
+  }, [conSesion]);
 
   useEffect(() => {
     void refrescar();

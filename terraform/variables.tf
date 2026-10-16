@@ -51,8 +51,19 @@ variable "esperar_imagenes" {
   default     = true
 }
 
+variable "container_insights" {
+  description = <<-EOT
+    Container Insights en el cluster de ECS. Prendido publica RunningTaskCount, el divisor del
+    backlog por tarea con el que escalan worker y procesador (escalado.tf). Apagado, los dos caen
+    a escalones sobre los mensajes visibles, sin dividir. false si el laboratorio no lo permite
+    (sección 12).
+  EOT
+  type        = bool
+  default     = true
+}
+
 variable "mensajes_por_worker" {
-  description = "Mensajes esperando en `inferencias` a partir de los cuales se agrega un worker."
+  description = "Mensajes esperando en `inferencias` por tarea del worker a partir de los cuales se agrega otra."
   type        = number
   default     = 10
 }
