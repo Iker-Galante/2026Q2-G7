@@ -45,6 +45,17 @@ variable "waf_activo" {
   default     = true
 }
 
+variable "crear_buckets" {
+  description = <<-EOT
+    Que el apply cree los buckets llamando al CLI (scripts/buckets.sh). Siempre true en una cuenta
+    de verdad: es la única forma de crearlos, porque el provider no puede refrescar un
+    `aws_s3_bucket` en el Learner Lab (ver s3.tf). false solo en `terraform test`, donde no hay
+    cuenta contra la que correr el CLI.
+  EOT
+  type        = bool
+  default     = true
+}
+
 variable "esperar_imagenes" {
   description = "Que el apply espere a que el constructor suba las imágenes antes de crear los servicios. Usa la CLI de AWS (está en CloudShell). false = ECS reintenta solo hasta que aparezcan."
   type        = bool

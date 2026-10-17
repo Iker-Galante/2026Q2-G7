@@ -62,10 +62,12 @@ data "archive_file" "codigo" {
 }
 
 resource "aws_s3_object" "codigo" {
-  bucket = aws_s3_bucket.b["artefactos"].id
+  bucket = local.buckets.artefactos
   key    = "codigo/${local.version_codigo}.zip"
   source = data.archive_file.codigo.output_path
   # Sin etag a propósito: la clave ya lleva el hash del código.
+
+  depends_on = [terraform_data.buckets]
 }
 
 # --- El constructor -------------------------------------------------------------------

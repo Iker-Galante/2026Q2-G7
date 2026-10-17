@@ -17,7 +17,7 @@ incluidos. Quien lo corre no necesita Docker.
 | ECR y el constructor de imágenes | `imagenes.tf`, `plantillas/constructor.sh.tftpl` |
 | SQS: `inferencias`, `evaluaciones`, `resultados`, cada una con su cola de fallidos | `colas.tf` |
 | RDS PostgreSQL 16 y su URL en Secrets Manager | `datos.tf` |
-| Cinco buckets: web (el sitio), modelos, estudios, evaluación, artefactos | `s3.tf` |
+| Cinco buckets: web (el sitio), modelos, estudios, evaluación, artefactos | `s3.tf`, `scripts/buckets.sh` |
 | EFS como caché de modelos de los workers | `efs.tf` |
 | SNS y alarmas: colas de fallidos y 5xx del ALB | `alertas.tf` |
 
@@ -90,6 +90,13 @@ este, con el sitio en S3 (cambia también la decisión 11).
 
 - **No crea roles de IAM.** Tareas de ECS, Lambdas y constructor usan `LabRole` o
   `LabInstanceProfile` (se leen con `data`).
+- **Los buckets los crea el CLI, no `aws_s3_bucket`.** El lab tiene un deny explícito sobre
+  `s3:GetBucketObjectLockConfiguration` en una SCP, y el provider lee esa configuración cada vez
+  que refresca un bucket: el apply muere con `AccessDenied` aunque el bucket no use object lock.
+  No se arregla con permisos (una SCP no se sobreescribe) ni pineando el provider. Un paso del
+  apply llama a `scripts/buckets.sh`, que crea lo que falte y al destruir vacía y borra; todo el
+  resto de la configuración de cada bucket la sigue administrando Terraform. Por eso el apply
+  necesita el `aws` CLI en la máquina, igual que para esperar las imágenes.
 - **Sin CloudFront ni dominio propio.** El HTTPS lo pone API Gateway; el sitio es HTTP.
 - **RDS sin Multi-AZ**, solo `us-east-1`, sin instance refresh (ya no hay grupos de EC2).
 - **Credenciales de sesión:** se corre desde CloudShell. `scripts/tf.sh` deja el proveedor de AWS

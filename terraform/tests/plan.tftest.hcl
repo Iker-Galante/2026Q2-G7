@@ -29,9 +29,6 @@ mock_provider "aws" {
   mock_resource "aws_lb_listener" {
     defaults = { arn = "arn:aws:elasticloadbalancing:us-east-1:123456789012:listener/app/ateneo-interno/0123456789abcdef/0123456789abcdef" }
   }
-  mock_resource "aws_s3_bucket" {
-    defaults = { arn = "arn:aws:s3:::ateneo-bucket" }
-  }
   mock_resource "aws_s3_bucket_website_configuration" {
     defaults = { website_endpoint = "ateneo-web-prueba.s3-website-us-east-1.amazonaws.com" }
   }
@@ -79,8 +76,10 @@ mock_provider "archive" {}
 
 variables {
   sufijo = "prueba"
-  # Esperar las imágenes es un local-exec contra ECR: en las pruebas no hay cuenta a la que preguntar.
+  # Los dos pasos que salen de Terraform y llaman al CLI: en las pruebas no hay cuenta.
+  # Esperar las imágenes le pregunta a ECR; crear los buckets los crea de verdad (s3.tf).
   esperar_imagenes = false
+  crear_buckets    = false
 }
 
 run "red" {
@@ -227,6 +226,20 @@ run "login_de_la_clase" {
       one(one(c.rule).apply_server_side_encryption_by_default).sse_algorithm == "AES256"
     ])
     error_message = "Los cinco buckets declaran el cifrado en reposo, no lo heredan del valor por defecto."
+  }
+  # Los buckets los crea el CLI, no `aws_s3_bucket` (ver s3.tf), así que los ARN de las políticas
+  # se arman con el nombre en lugar de leerse del recurso. Si eso se rompe, se rompe en silencio:
+  # la política se aplicaría a otro bucket, o a ninguno.
+  assert {
+    condition = alltrue([
+      for clave, nombre in output.buckets :
+      strcontains(aws_s3_bucket_policy.b[clave].policy, "\"arn:aws:s3:::${nombre}/*\"")
+    ])
+    error_message = "Cada política apunta al ARN de su propio bucket."
+  }
+  assert {
+    condition = keys(aws_s3_bucket_public_access_block.b) == ["artefactos", "estudios", "evaluacion", "modelos", "web"]
+    error_message = "Las configuraciones de bucket cubren los cinco buckets."
   }
 }
 

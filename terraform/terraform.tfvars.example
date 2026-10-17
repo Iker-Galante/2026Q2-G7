@@ -14,3 +14,7 @@ datos_demo = true
 
 # false si el laboratorio no deja asociar un WAF al ALB.
 waf_activo = true
+
+# Container Insights: publica RunningTaskCount, el divisor con el que escalan worker y procesador.
+# false si el laboratorio no lo permite; ahí los dos escalan por mensajes a secas.
+container_insights = true
