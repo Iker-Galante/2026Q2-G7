@@ -1,7 +1,12 @@
-import type { ModeloDisponible } from "../api/tipos";
+import type { Modelo, ModeloDisponible } from "../api/tipos";
+import { Enlace, rutaDeModelo } from "../enrutador";
+import { porcentaje } from "../utilidades/formato";
+import EstadoModelo from "./EstadoModelo";
 
 interface Props {
   disponibles: ModeloDisponible[];
+  /** Los publicados, para mostrar el estado de la evaluación de cada uno. */
+  publicados: Modelo[];
   cargando: boolean;
   publicando: boolean;
   /** "nombre@version" del que se está publicando, para el spinner de esa fila. */
@@ -13,53 +18,60 @@ export function clave(m: { nombre: string; version: string }): string {
   return `${m.nombre}@${m.version}`;
 }
 
-/** Los prefijos con modelo.json que hay en el bucket, con su botón de alta. */
+/** Los modelos que hay en el bucket: su estado y la acción que corresponde. */
 export default function ListaDisponibles({
   disponibles,
+  publicados,
   cargando,
   publicando,
   claveEnCurso,
   onPublicar,
 }: Props) {
   if (disponibles.length === 0) {
-    return (
-      <p className="vacio">
-        {cargando
-          ? "Buscando modelos en el bucket…"
-          : "No hay ningún prefijo con modelo.json en el bucket de modelos. Subí un modelo y su contrato para verlo acá."}
-      </p>
-    );
+    return <p className="vacio chico">{cargando ? "Cargando…" : "Todavía no subiste ningún modelo."}</p>;
   }
+
+  const porId = new Map(publicados.map((m) => [m.id, m]));
 
   return (
     <ul className="filas">
-      {disponibles.map((m) => {
-        const esta = claveEnCurso === clave(m);
+      {disponibles.map((d) => {
+        const esta = claveEnCurso === clave(d);
+        const modelo = d.modelo_id ? porId.get(d.modelo_id) : undefined;
         return (
-          <li key={clave(m)} className="fila">
+          <li key={clave(d)} className="fila">
             <div className="fila-identidad">
-              <span className="fila-nombre">{m.nombre}</span>
-              <span className="version">v{m.version}</span>
+              {modelo ? (
+                <Enlace a={rutaDeModelo(modelo.id)} className="fila-nombre">
+                  {d.nombre}
+                </Enlace>
+              ) : (
+                <span className="fila-nombre">{d.nombre}</span>
+              )}
+              <span className="version">v{d.version}</span>
+              <span className="fila-tipo">{d.tipo_estudio}</span>
             </div>
 
-            <div className="fila-datos">
-              <span className="chip">{m.tipo_estudio}</span>
-              <span className={m.publicado ? "pastilla ok" : "pastilla"}>
-                {m.publicado ? "en el catálogo" : "sin publicar"}
-              </span>
+            <div className="fila-estado">
+              {modelo ? (
+                <>
+                  <EstadoModelo estado={modelo.estado_evaluacion} />
+                  {modelo.accuracy !== null && <span className="fila-accuracy">{porcentaje(modelo.accuracy)}</span>}
+                </>
+              ) : (
+                <span className="pastilla">Sin publicar</span>
+              )}
             </div>
 
-            <div className="fila-accion">
-              {esta && <span className="spinner" aria-hidden="true" />}
-              <button
-                type="button"
-                className={m.publicado ? "secundario" : undefined}
-                disabled={publicando}
-                onClick={() => onPublicar(m.nombre, m.version)}
-              >
-                {esta ? "Publicando…" : m.publicado ? "Volver a publicar" : "Publicar"}
-              </button>
-            </div>
+            <button
+              type="button"
+              className="pildora pildora-borde chica"
+              disabled={publicando}
+              onClick={() => onPublicar(d.nombre, d.version)}
+              title={d.publicado ? "Borra las métricas y lo vuelve a evaluar" : undefined}
+            >
+              {esta ? "Publicando…" : d.publicado ? "Reevaluar" : "Publicar"}
+            </button>
           </li>
         );
       })}
