@@ -128,6 +128,46 @@ este, con el sitio en S3 (cambia también la decisión 11).
 | Push a ECR desde EC2 con `LabInstanceProfile` | Construir con Docker en la máquina de quien corre Terraform |
 | Bucket web público (bloqueo de acceso público a nivel de cuenta) | Servir el sitio desde la api, detrás de API Gateway |
 
+## Lo que marca tfsec, y por qué
+
+El pipeline de la cátedra corre `tfsec` sobre `terraform/organization` y comenta los hallazgos en
+el PR. Hoy son **17, en 9 reglas**: 1 crítico, 1 alto, 2 medios y 13 bajos. Ninguno es un error:
+tfsec lee el código contra una lista genérica de buenas prácticas y no sabe nada de esta
+arquitectura ni del Learner Lab. Lo que sigue contesta cada uno.
+
+Para reproducirlo:
+
+```bash
+docker run --rm -v "$PWD:/src" aquasec/tfsec /src/terraform/organization
+```
+
+### Lo que se arregló
+
+Tres hallazgos que eran gratis y no tenían contra. Los altos pasaron de cuatro a uno.
+
+| Regla | Qué se hizo |
+|-------|-------------|
+| `aws-ecr-enable-image-scans` (alto) | `image_scanning_configuration` en los dos repositorios: al subir, AWS compara las capas contra las vulnerabilidades conocidas. El escaneo básico de ECR no cuesta nada |
+| `aws-elb-drop-invalid-headers` (alto) | `drop_invalid_header_fields` en el ALB: un encabezado HTTP malformado se tira ahí en vez de llegar a la api |
+| `aws-rds-enable-iam-auth` (medio) | `iam_database_authentication_enabled`: queda habilitado aunque la aplicación siga entrando con la contraseña de Secrets Manager. No cambia nada de cómo se conecta |
+
+### Lo que queda, y por qué
+
+| Severidad | Regla | Respuesta |
+|-----------|-------|-----------|
+| **CRÍTICO** | `aws-elb-http-not-used` | El listener del ALB es HTTP:80, y así se queda. Ese ALB es `internal = true`: no tiene IP pública y lo único que lo alcanza es el VPC Link de API Gateway, encadenado por grupos de seguridad. El HTTPS que ve el usuario lo termina API Gateway. HTTPS en ese tramo necesitaría un certificado para un nombre interno, o sea dominio propio y ACM, que es lo que el lab no da (es el riesgo 09 de la arquitectura) |
+| **ALTO** | `aws-sns-enable-topic-encryption` | Cifrar el topic con la clave que administra AWS **rompe las alarmas**: CloudWatch no puede publicar en un topic cifrado con `alias/aws/sns`, porque esa política de clave no se puede editar. Hacerlo bien pide una CMK con una política que le dé permiso a `cloudwatch.amazonaws.com`: una pieza más, un dólar por mes y algo que el lab puede no permitir. El topic solo lleva alertas de operación a los admins, no datos de pacientes |
+| MEDIO | `aws-ec2-require-vpc-flow-logs-for-all-vpcs` | Los flow logs se pagan por GB ingerido en CloudWatch. En un lab con crédito finito, no |
+| MEDIO | `aws-rds-enable-deletion-protection` | **A propósito en `false`.** La regla de uso es destruir al terminar cada sesión; con la protección puesta, `terraform destroy` falla y la base sigue cobrando |
+| BAJO ×7 | `aws-cloudwatch-log-group-customer-key` | Los grupos de logs ya se cifran con la clave de CloudWatch. Una clave propia por grupo son siete claves a ~USD 1 por mes |
+| BAJO ×2 | `aws-ecr-repository-customer-key` | Igual: ECR cifra con la clave de AWS; una CMK por repositorio es plata que no compra nada acá |
+| BAJO ×2 | `aws-lambda-enable-tracing` | X-Ray en las dos Lambdas del login. Suma una dependencia y un costo por traza para dos funciones que se invocan una vez por inicio de sesión |
+| BAJO | `aws-rds-enable-performance-insights` | `db.t3.micro` lo soporta y siete días de retención son gratis, pero habilitarlo abre un hallazgo **alto** nuevo (`aws-rds-enable-performance-insights-encryption`), que pide una CMK para cifrar esos datos. Cambiar un bajo por un alto no es una mejora |
+| BAJO | `aws-ssm-secret-use-customer-key` | El secreto con la URL de la base ya se cifra con la clave de Secrets Manager |
+
+No hay ningún `tfsec:ignore` en el código, a propósito: preferimos que el hallazgo aparezca en el
+PR y que la respuesta esté acá, en vez de silenciarlo.
+
 ## Un equipo de varias personas
 
 Los buckets y el dominio de Cognito llevan un sufijo al azar que queda en el estado, así que cada

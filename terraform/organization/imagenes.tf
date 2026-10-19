@@ -9,6 +9,12 @@ resource "aws_ecr_repository" "r" {
   name                 = "ateneo/${each.key}"
   image_tag_mutability = "IMMUTABLE" # una etiqueta es una versión del código, para siempre
   force_delete         = true        # terraform destroy borra también las imágenes
+
+  # Escaneo básico de ECR: al subir, AWS compara las capas contra las vulnerabilidades conocidas
+  # y el resultado queda en la consola. No cuesta nada y no cambia el push.
+  image_scanning_configuration {
+    scan_on_push = true
+  }
 }
 
 resource "aws_ecr_lifecycle_policy" "r" {

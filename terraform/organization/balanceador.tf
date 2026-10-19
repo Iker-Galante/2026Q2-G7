@@ -8,6 +8,11 @@ resource "aws_lb" "interno" {
   load_balancer_type = "application"
   security_groups    = [local.sg["alb"]]
   subnets            = local.sub["aplicacion"]
+
+  # Un encabezado HTTP malformado se tira acá en vez de llegar a la api. Es gratis y cierra la
+  # clase de ataques que mete dos encabezados y se aprovecha de que el proxy y el servidor no
+  # interpreten igual cuál vale.
+  drop_invalid_header_fields = true
 }
 
 resource "aws_lb_target_group" "api" {

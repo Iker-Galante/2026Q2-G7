@@ -39,6 +39,10 @@ resource "aws_db_instance" "ateneo" {
   skip_final_snapshot     = true
   apply_immediately       = true
 
+  # Habilitado pero sin usar: la aplicación entra con la contraseña que lee de Secrets Manager.
+  # Está para que un humano pueda conectarse con un token de IAM en vez de pedir la contraseña.
+  iam_database_authentication_enabled = true
+
   tags = { Name = "ateneo-db" }
 }
 
