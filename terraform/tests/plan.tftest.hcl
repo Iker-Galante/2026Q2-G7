@@ -238,7 +238,7 @@ run "login_de_la_clase" {
     error_message = "Cada política apunta al ARN de su propio bucket."
   }
   assert {
-    condition = keys(aws_s3_bucket_public_access_block.b) == ["artefactos", "estudios", "evaluacion", "modelos", "web"]
+    condition     = keys(aws_s3_bucket_public_access_block.b) == ["artefactos", "estudios", "evaluacion", "modelos", "web"]
     error_message = "Las configuraciones de bucket cubren los cinco buckets."
   }
 }
