@@ -132,3 +132,41 @@ terraform init -backend=false
 terraform validate
 terraform test          # la arquitectura del HTML contra un AWS simulado: red, cómputo, login, variables
 ```
+
+## El pipeline de GitHub Actions
+
+Cuatro workflows en `.github/workflows/`. La división es por si necesitan credenciales de AWS o
+no, porque las del Learner Lab vencen cada sesión:
+
+| Workflow | Cuándo corre | Toca AWS | Qué hace |
+|----------|--------------|----------|----------|
+| `validar.yml` | solo, en cada push y cada PR | no | `fmt -check`, `init -backend=false`, `validate`, `test` |
+| `plan.yml` | en el PR hacia `main`, y a mano | sí | bucket del estado y `tf.sh plan`; guarda el plan como artifact |
+| `aplicar.yml` | **solo a mano**, escribiendo «aplicar» | sí | `tf.sh apply`; imprime el sitio y el admin inicial |
+| `destruir.yml` | **solo a mano**, escribiendo «destruir» | sí | `tf.sh destroy` |
+
+`validar` es el que tiene que estar siempre verde: no depende de credenciales. `plan` avisa en el
+resumen y termina en verde si los secrets están vacíos, en lugar de pintar el PR de rojo.
+
+Los workflows no repiten comandos: llaman a `scripts/bootstrap-estado.sh` y `scripts/tf.sh`, los
+mismos que usa una persona en CloudShell. Así el pipeline no puede desalinearse de esta guía.
+
+Aplicar y destruir no se disparan con un push, a propósito: el lab cuesta unos USD 7 por día
+prendido y la regla de uso es destruir al terminar: prenderlo es una decisión de una persona.
+Los tres comparten `concurrency: infraestructura`, así que nunca corren dos a la vez contra la
+misma cuenta.
+
+### Secrets que hay que cargar en el repositorio
+
+En Settings → Secrets and variables → Actions → New repository secret:
+
+| Secret | De dónde sale |
+|--------|---------------|
+| `AWS_ACCESS_KEY_ID` | AWS Details → AWS CLI en el Learner Lab |
+| `AWS_SECRET_ACCESS_KEY` | idem |
+| `AWS_SESSION_TOKEN` | idem |
+| `EMAIL_ADMIN` | el mail del `admin_plataforma` inicial |
+| `EMAIL_ALERTAS` | el mail que recibe las alarmas de operación |
+
+Las tres primeras **vencen cada sesión del lab** (unas cuatro horas): hay que volver a pegarlas
+antes de correr `plan`, `aplicar` o `destruir`.
