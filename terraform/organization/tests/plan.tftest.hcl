@@ -94,13 +94,14 @@ run "red" {
     error_message = "Solo la capa de aplicación sale por el NAT."
   }
   assert {
-    condition     = length(aws_vpc_endpoint.s3.route_table_ids) == 3 && !contains(aws_vpc_endpoint.s3.route_table_ids, aws_route_table.capa["datos"].id)
+    condition     = length(module.endpoints.endpoints["s3"].route_table_ids) == 3 && !contains(module.endpoints.endpoints["s3"].route_table_ids, aws_route_table.capa["datos"].id)
     error_message = "El endpoint de S3 va en aplicación, inferencia y evaluación; datos no lo necesita."
   }
   assert {
     condition = alltrue([
-      for e in aws_vpc_endpoint.interfaz : e.subnet_ids == toset([aws_subnet.capa["endpoints-a"].id, aws_subnet.capa["endpoints-b"].id])
-    ]) && length(aws_vpc_endpoint.interfaz) == 4
+      for k, e in module.endpoints.endpoints : e.subnet_ids == toset([aws_subnet.capa["endpoints-a"].id, aws_subnet.capa["endpoints-b"].id])
+      if k != "s3"
+    ]) && length([for k, e in module.endpoints.endpoints : k if k != "s3"]) == 4
     error_message = "Cuatro endpoints de interfaz (ecr.api, ecr.dkr, logs, sqs) en sus propias subredes."
   }
   assert {

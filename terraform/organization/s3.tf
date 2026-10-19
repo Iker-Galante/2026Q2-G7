@@ -158,7 +158,7 @@ locals {
       Principal = "*"
       Action    = "s3:GetObject"
       Resource  = "${local.arn_bucket["evaluacion"]}/*"
-      Condition = { StringNotEquals = { "aws:sourceVpce" = aws_vpc_endpoint.s3.id } }
+      Condition = { StringNotEquals = { "aws:sourceVpce" = module.endpoints.endpoints["s3"].id } }
     }])
     # El sitio se lee por el endpoint de sitio web de S3, que es HTTP: acá no va la regla de TLS.
     web = jsonencode([{

@@ -116,8 +116,7 @@ resource "aws_instance" "constructor" {
   depends_on = [
     aws_route.aplicacion_nat,
     aws_route_table_association.capa,
-    aws_vpc_endpoint.interfaz,
-    aws_vpc_endpoint.s3,
+    module.endpoints,
     aws_vpc_security_group_egress_rule.r,
     aws_s3_bucket_policy.b,
   ]

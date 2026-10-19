@@ -87,28 +87,51 @@ resource "aws_route" "aplicacion_nat" {
 
 # --- Endpoints ------------------------------------------------------------------------
 
-# Gateway de S3: gratis. Datos no lo tiene: RDS no usa S3, y lo que una capa no necesita no lo tiene.
-resource "aws_vpc_endpoint" "s3" {
-  vpc_id            = aws_vpc.ateneo.id
-  service_name      = "com.amazonaws.${var.region}.s3"
-  vpc_endpoint_type = "Gateway"
-  route_table_ids   = [for capa in ["aplicacion", "inferencia", "evaluacion"] : aws_route_table.capa[capa].id]
-  tags              = { Name = "ateneo-s3" }
-}
+# Los cinco endpoints los crea el módulo de la comunidad terraform-aws-modules/vpc/aws, el
+# submódulo vpc-endpoints: es el mismo recurso con una tabla de entrada, y resuelve en un lugar la
+# diferencia entre un gateway (lleva tablas de ruteo, no subredes ni grupos) y uno de interfaz
+# (lleva subredes, grupo y DNS privado), que es justo lo que se escribe mal a mano.
+#
+# Le pasamos `service_endpoint` armado y `region`: con la región fija, el módulo no crea un data
+# source `aws_vpc_endpoint_service` por endpoint para resolver el nombre, que son cinco llamadas
+# a la API en cada plan para un nombre que ya conocemos.
+#
+# Gateway de S3: gratis. Datos no lo tiene: RDS no usa S3, y lo que una capa no necesita no lo
+# tiene. Fargate sin internet necesita bajar imágenes (ECR) y escribir logs; worker y evaluador,
+# además, SQS. Con DNS privado, los nombres públicos de esos servicios resuelven a estas IP en
+# toda la VPC. Van en subredes propias para no entrar a la subred aislada ni atravesar su NACL
+# (decisión 07).
+module "endpoints" {
+  source = "terraform-aws-modules/vpc/aws//modules/vpc-endpoints"
+  # Exacta, no "~> 6.7": el lock de Terraform solo fija proveedores, no módulos, así que esta
+  # línea es lo único que hace que la cátedra baje la misma versión contra la que probamos.
+  version = "6.7.3"
 
-# Fargate sin internet necesita bajar imágenes (ECR) y escribir logs; worker y evaluador, además,
-# SQS. Con DNS privado, los nombres públicos de estos servicios resuelven a estas IPs en toda la
-# VPC. Van en subredes propias para no entrar a la subred aislada ni atravesar su NACL (decisión 07).
-resource "aws_vpc_endpoint" "interfaz" {
-  for_each = toset(["ecr.api", "ecr.dkr", "logs", "sqs"])
+  vpc_id = aws_vpc.ateneo.id
+  region = var.region
 
-  vpc_id              = aws_vpc.ateneo.id
-  service_name        = "com.amazonaws.${var.region}.${each.key}"
-  vpc_endpoint_type   = "Interface"
-  subnet_ids          = local.sub["endpoints"]
-  security_group_ids  = [aws_security_group.g["endpoints"].id]
-  private_dns_enabled = true
-  tags                = { Name = "ateneo-${replace(each.key, ".", "-")}" }
+  # Valen para los de interfaz; el módulo no se los pasa al gateway.
+  subnet_ids         = local.sub["endpoints"]
+  security_group_ids = [aws_security_group.g["endpoints"].id]
+
+  endpoints = merge(
+    {
+      s3 = {
+        service_endpoint = "com.amazonaws.${var.region}.s3"
+        service_type     = "Gateway"
+        route_table_ids  = [for capa in ["aplicacion", "inferencia", "evaluacion"] : aws_route_table.capa[capa].id]
+        tags             = { Name = "ateneo-s3" }
+      }
+    },
+    {
+      for servicio in ["ecr.api", "ecr.dkr", "logs", "sqs"] : servicio => {
+        service_endpoint    = "com.amazonaws.${var.region}.${servicio}"
+        service_type        = "Interface"
+        private_dns_enabled = true
+        tags                = { Name = "ateneo-${replace(servicio, ".", "-")}" }
+      }
+    }
+  )
 }
 
 # --- NACL de evaluación: la segunda barrera, sin estado --------------------------------
