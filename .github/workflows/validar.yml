@@ -22,10 +22,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # La misma versión que instala scripts/tf.sh, para que acá y en CloudShell corra lo mismo.
+      # La misma versión que instala scripts/tf.sh. Tiene que ser >= la que se use en una máquina: Terraform
+      # se niega a leer un estado escrito por una versión más nueva que la suya.
       - uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.12.2
+          terraform_version: 1.16.5
           terraform_wrapper: false
 
       # Desde la raíz y recursivo, igual que el workflow «Terraform Format» de la plantilla de la

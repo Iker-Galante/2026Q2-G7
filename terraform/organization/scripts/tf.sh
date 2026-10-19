@@ -9,7 +9,7 @@
 # entra. Así que el binario va a ~/bin (90 MB, persiste) y el proveedor a /tmp, que no persiste
 # pero tiene lugar: cada sesión nueva lo vuelve a bajar en el init (un minuto).
 set -euo pipefail
-VERSION_TF=1.12.2
+VERSION_TF=1.16.5
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 
 if ! command -v terraform >/dev/null 2>&1 && [ ! -x "$HOME/bin/terraform" ]; then

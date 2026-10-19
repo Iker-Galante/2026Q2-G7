@@ -1,5 +1,7 @@
 terraform {
-  # 1.10+ por el lock nativo del backend S3 (use_lockfile), sin DynamoDB.
+  # 1.10+ por el lock nativo del backend S3 (use_lockfile), sin DynamoDB. El pipeline y tf.sh
+  # fijan 1.16.5: Terraform se niega a leer un estado escrito por una versión más nueva que la
+  # suya, así que la de CI no puede quedar atrás de la que use alguien en su máquina.
   required_version = ">= 1.10"
 
   required_providers {
