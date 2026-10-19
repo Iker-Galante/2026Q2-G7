@@ -49,10 +49,12 @@ nuevas y ECS cambia las tareas de a poco. **Sin cambios, el plan sale vacío.**
 
 ## Primer despliegue
 
-En CloudShell, parado en el clon:
+En CloudShell, parado en el clon. El branch es `alineacion/catalogo-publico-y-escalado`: es el
+único que trae la creación de los buckets por CLI, y sin eso el apply muere en el Learner Lab (más
+abajo, en las restricciones). Cuando ese branch se integre a `entrega3`, los dos sirven.
 
 ```bash
-git clone https://github.com/nnicokim/TP-AWS.git ~/ateneo && cd ~/ateneo && git checkout entrega3
+git clone https://github.com/nnicokim/TP-AWS.git ~/ateneo && cd ~/ateneo && git checkout alineacion/catalogo-publico-y-escalado
 bash terraform/organization/scripts/bootstrap-estado.sh            # una vez por cuenta: bucket del estado + backend.hcl
 cp terraform/organization/terraform.tfvars.example terraform/organization/terraform.tfvars
 nano terraform/organization/terraform.tfvars                       # email_admin y email_alertas
