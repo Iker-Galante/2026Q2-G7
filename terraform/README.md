@@ -4,10 +4,21 @@ La arquitectura de «Ateneo en AWS 2.0» (Entrega 3) entera en Terraform: `terra
 todo en una cuenta limpia del Learner Lab y `terraform destroy` lo borra, imágenes y buckets
 incluidos. Quien lo corre no necesita Docker.
 
+```
+terraform/
+    organization/   el root module: es acá donde se corre plan y apply
+    modules/
+        cola/       módulo propio: una cola de trabajo con su cola de fallidos
+```
+
+Las dos rutas no son una elección nuestra: los workflows que trae la plantilla de los repos de
+`itba-cloud` las tienen escritas (`tfsec` corre sobre `terraform/organization`, `terraform-docs`
+sobre `terraform/modules`).
+
 | Pieza | Archivo |
 |-------|---------|
 | VPC 10.0.0.0/16: once subredes en seis capas, una tabla de ruteo por capa, un NAT, NACL de evaluación | `red.tf` |
-| Endpoint Gateway de S3 y cuatro de interfaz (`ecr.api`, `ecr.dkr`, `logs`, `sqs`) en subredes propias | `red.tf` |
+| Endpoint Gateway de S3 y cuatro de interfaz (`ecr.api`, `ecr.dkr`, `logs`, `sqs`) en subredes propias | `red.tf`, módulo externo `vpc-endpoints` |
 | Grupos de seguridad encadenados; procesador, worker, evaluador y constructor sin entrada | `seguridad.tf` |
 | API Gateway (HTTP API, HTTPS) → VPC Link → ALB interno + WAF | `api.tf`, `balanceador.tf` |
 | El autorizador JWT en todo `/api/*` salvo `/api/health` y `/api/publico/*`, que es el catálogo que ve el Visitante | `api.tf`, `backend/app/api/rutas/publico.py` |
@@ -15,7 +26,7 @@ incluidos. Quien lo corre no necesita Docker.
 | El login de la clase: sitio en S3 y Lambda en `/callback` | `cognito.tf`, `api.tf`, `lambda/` |
 | ECS Fargate: api, procesador, worker, evaluador | `ecs.tf`, `escalado.tf` |
 | ECR y el constructor de imágenes | `imagenes.tf`, `plantillas/constructor.sh.tftpl` |
-| SQS: `inferencias`, `evaluaciones`, `resultados`, cada una con su cola de fallidos | `colas.tf` |
+| SQS: `inferencias`, `evaluaciones`, `resultados`, cada una con su cola de fallidos | `colas.tf`, `modules/cola/` |
 | RDS PostgreSQL 16 y su URL en Secrets Manager | `datos.tf` |
 | Cinco buckets: web (el sitio), modelos, estudios, evaluación, artefactos | `s3.tf`, `scripts/buckets.sh` |
 | EFS como caché de modelos de los workers | `efs.tf` |
@@ -132,6 +143,45 @@ terraform init -backend=false
 terraform validate
 terraform test          # la arquitectura del HTML contra un AWS simulado: red, cómputo, login, variables
 ```
+
+## Módulos, funciones y meta-argumentos
+
+Lo que pide la entrega, y dónde está.
+
+### Módulos
+
+| | Módulo | Dónde se llama | Qué encapsula |
+|-|--------|----------------|----------------|
+| **propio** | [`modules/cola`](modules/cola/README.md) | `organization/colas.tf`, con `for_each` sobre las tres colas | La cola, su cola de fallidos y las dos políticas que las emparejan. La arquitectura dice que ninguna cola de trabajo va sin su DLQ (sección 08, decisión 03): acá no se puede olvidar. 6 variables con `validation`, 7 salidas. |
+| **externo** | [`terraform-aws-modules/vpc/aws//modules/vpc-endpoints`](https://registry.terraform.io/modules/terraform-aws-modules/vpc/aws/6.7.3/submodules/vpc-endpoints) `6.7.3` | `organization/red.tf` | Los cinco endpoints de la VPC. Resuelve en un lugar la diferencia entre un gateway (lleva tablas de ruteo) y uno de interfaz (lleva subredes, grupo y DNS privado). |
+
+La versión del módulo externo está fijada exacta, no con `~>`: el lock de Terraform solo fija
+proveedores, así que esa línea es lo único que garantiza que la cátedra baje lo mismo que probamos.
+
+### Meta-argumentos
+
+| Meta-argumento | Usos | Un ejemplo |
+|----------------|------|------------|
+| `for_each` | 33 | Las once subredes salen de un mapa de capas (`red.tf`); los cuatro servicios de Fargate, de `local.servicios` (`ecs.tf`) |
+| `depends_on` | 15 | Cada configuración de bucket espera a `terraform_data.buckets`, porque los buckets no los crea el proveedor (`s3.tf`) |
+| `count` | 6 | La suscripción de SNS existe solo si hay un mail de alertas (`alertas.tf`) |
+| `lifecycle` | 2 | `ignore_changes` en el `desired_count` de los servicios, que lo maneja el escalado (`ecs.tf`), y en la AMI del constructor, que cambia sola cada tanto (`imagenes.tf`) |
+
+### Funciones
+
+26 distintas. Las que hacen algo que se nota:
+
+| Función | Para qué |
+|---------|----------|
+| `fileset`, `filesha256`, `sha256`, `substr` | La etiqueta de las imágenes es el hash del código del repositorio: si no cambia el código, el plan sale vacío (`imagenes.tf`) |
+| `templatefile` | El script del constructor, que se arma con las direcciones de la cuenta (`imagenes.tf`) |
+| `jsonencode`, `jsondecode` | Las políticas de los buckets y de las colas |
+| `merge` | Las once subredes, aplanando el mapa de capas; y los cinco endpoints, juntando el gateway con los cuatro de interfaz (`red.tf`) |
+| `can`, `regex` | Las validaciones de `modules/cola`: un nombre que no sirve para una cola de SQS falla en el plan, no en el apply |
+| `abspath` | La ruta del script de los buckets y la raíz del repositorio, que no dependen de desde dónde se corra |
+| `toset`, `keys`, `flatten`, `distinct`, `sort`, `concat`, `length`, `contains`, `strcontains`, `split`, `join`, `replace`, `upper`, `endswith`, `file` | El resto, repartidas |
+
+Hay además 11 variables y 10 salidas en el root, y 5 bloques `validation`.
 
 ## El pipeline de GitHub Actions
 
