@@ -159,7 +159,7 @@ export default function SubirModelo({
           <span className="suave">{tamanoLegible(archivo.size)}</span>
           <button
             type="button"
-            className="secundario"
+            className="pildora pildora-borde chica"
             disabled={publicando}
             onClick={() => setArchivo(null)}
           >
@@ -176,8 +176,7 @@ export default function SubirModelo({
 
       {publicado && (
         <p className="ayuda" role="status">
-          <span className="pastilla ok">subido</span> Quedó en <code>{publicado}</code>. Su
-          evaluación está más abajo.
+          <span className="pastilla ok">subido</span> Quedó en <code>{publicado}</code>.
         </p>
       )}
 
@@ -232,7 +231,7 @@ export default function SubirModelo({
       )}
 
       <div className="fila-accion">
-        <button type="button" onClick={enviar} disabled={!puedeSubir}>
+        <button type="button" className="pildora pildora-oscura" onClick={enviar} disabled={!puedeSubir}>
           {publicando ? "Subiendo…" : "Subir y publicar"}
         </button>
         {!publicando && archivo === null && (

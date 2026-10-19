@@ -7,15 +7,23 @@ import type { Ruta } from "./enrutador";
 import { useSalud } from "./hooks/useSalud";
 import { useSesion } from "./hooks/useSesion";
 import { useTema } from "./hooks/useTema";
-import Consulta from "./pages/Consulta";
+import FichaModelo from "./pages/FichaModelo";
 import Inicio from "./pages/Inicio";
+import Modelos from "./pages/Modelos";
 import Publicar from "./pages/Publicar";
 
-const TITULOS: Record<Ruta, string> = {
-  "/": "Ateneo · Modelos de IA clínica medidos con la misma vara",
-  "/publicar": "Publicar un modelo · Ateneo",
-  "/consulta": "Consultar un estudio · Ateneo",
-};
+function titulo(ruta: Ruta): string {
+  switch (ruta.vista) {
+    case "inicio":
+      return "Ateneo · Modelos de IA clínica evaluados";
+    case "modelos":
+      return "Modelos · Ateneo";
+    case "modelo":
+      return "Modelo · Ateneo";
+    case "publicar":
+      return "Publicar un modelo · Ateneo";
+  }
+}
 
 interface Props {
   /** El login volvió con un error (cancelado, código vencido, state ajeno). */
@@ -23,8 +31,8 @@ interface Props {
 }
 
 /**
- * Marco del sitio: barra, la vista de la ruta actual y pie. Con Cognito, las
- * dos secciones piden sesión; la portada no.
+ * Marco del sitio: barra, la vista de la ruta actual y pie. El catálogo y las fichas
+ * son públicos; publicar pide sesión, y analizar un estudio la pide dentro de la ficha.
  */
 export default function App({ errorIngreso }: Props) {
   const ruta = useRuta();
@@ -33,27 +41,31 @@ export default function App({ errorIngreso }: Props) {
   const { sesion, conLogin } = useSesion();
   const [aviso, setAviso] = useState(errorIngreso);
   const pideIngreso = conLogin && sesion === null;
+  const enPortada = ruta.vista === "inicio";
 
   useEffect(() => {
-    document.title = TITULOS[ruta];
+    if (ruta.vista !== "modelo") document.title = titulo(ruta);
   }, [ruta]);
 
   return (
-    <div className="sitio">
-      <Navegacion salud={salud} consultado={consultado} tema={tema} onAlternarTema={alternar} />
+    <div className={enPortada ? "sitio sitio-portada" : "sitio"}>
+      <Navegacion sobrePortada={enPortada} tema={tema} onAlternarTema={alternar} />
 
       <main className="contenido">
         {aviso && (
-          <div className="caja-error aviso-ingreso" role="alert">
-            {aviso}{" "}
-            <button type="button" className="enlace" onClick={() => setAviso(null)}>
-              Cerrar
-            </button>
+          <div className="marco">
+            <div className="caja-error aviso-ingreso" role="alert">
+              {aviso}{" "}
+              <button type="button" className="enlace" onClick={() => setAviso(null)}>
+                Cerrar
+              </button>
+            </div>
           </div>
         )}
-        {ruta === "/publicar" && (pideIngreso ? <PideIngreso ruta={ruta} /> : <Publicar />)}
-        {ruta === "/consulta" && (pideIngreso ? <PideIngreso ruta={ruta} /> : <Consulta />)}
-        {ruta === "/" && <Inicio />}
+        {ruta.vista === "inicio" && <Inicio />}
+        {ruta.vista === "modelos" && <Modelos />}
+        {ruta.vista === "modelo" && <FichaModelo key={ruta.id} id={ruta.id} />}
+        {ruta.vista === "publicar" && (pideIngreso ? <PideIngreso /> : <Publicar />)}
       </main>
 
       <PieSitio salud={salud} consultado={consultado} />

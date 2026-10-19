@@ -1,6 +1,6 @@
 /* Ateneo · hoja de estilos, sin librerías.
-   Tres archivos: los tokens y el texto, el sitio (barra, pie, portada) y los
-   paneles (tarjetas, tablas, cargador, resultado). */
+   Tres archivos: los tokens y los controles, el sitio (barra, portada, pie) y
+   los paneles (tarjetas, ficha, formularios, resultado). */
 
 @import "./estilos/base.css";
 @import "./estilos/sitio.css";
