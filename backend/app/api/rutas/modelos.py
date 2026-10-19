@@ -1,13 +1,16 @@
-from uuid import UUID
+"""Lo del publicador: qué hay en el bucket, firmar la subida y publicar. Todo pide token.
+
+El catálogo —la lista de publicados y la ficha de cada uno— no está acá: es público y vive en
+rutas/publico.py, bajo el único prefijo que el autorizador de API Gateway exime.
+"""
 
 from fastapi import APIRouter, Depends, status
 
 from ...aplicacion.casos_uso.modelos import (
-    ConsultarModelo, ListarModelos, ListarModelosDisponibles, PrepararSubidaModelo, PublicarModelo,
+    ListarModelosDisponibles, PrepararSubidaModelo, PublicarModelo,
 )
 from ..dependencias import (
-    dep_consultar_modelo, dep_listar_disponibles, dep_listar_modelos, dep_preparar_subida,
-    dep_publicar_modelo, usuario_actual,
+    dep_listar_disponibles, dep_preparar_subida, dep_publicar_modelo, usuario_actual,
 )
 from ..esquemas import (
     ErrorRespuesta, ModeloDisponibleRespuesta, ModeloRespuesta, PrepararSubidaModeloPeticion,
@@ -42,13 +45,3 @@ def preparar_subida(peticion: PrepararSubidaModeloPeticion,
 )
 def publicar(peticion: PublicarModeloPeticion, caso: PublicarModelo = Depends(dep_publicar_modelo)):
     return ModeloRespuesta.desde(caso.ejecutar(peticion.nombre, peticion.version, peticion.contrato))
-
-
-@router.get("", response_model=list[ModeloRespuesta])
-def listar(caso: ListarModelos = Depends(dep_listar_modelos)):
-    return [ModeloRespuesta.desde(m) for m in caso.ejecutar()]
-
-
-@router.get("/{modelo_id}", response_model=ModeloRespuesta, responses={404: {"model": ErrorRespuesta}})
-def obtener(modelo_id: UUID, caso: ConsultarModelo = Depends(dep_consultar_modelo)):
-    return ModeloRespuesta.desde(caso.ejecutar(modelo_id))

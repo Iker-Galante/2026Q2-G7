@@ -1,43 +1,50 @@
 import { crearCuenta, ingresar } from "../api/sesion";
-
-const TEXTOS = {
-  "/publicar": { eyebrow: "Para quien publica", titulo: "Publicar un modelo" },
-  "/consulta": { eyebrow: "Para el equipo clínico", titulo: "Consultar un estudio" },
-} as const;
+import { Flecha } from "./Navegacion";
 
 interface Props {
-  ruta: keyof typeof TEXTOS;
+  /** Dentro de otro panel (la ficha): sin encabezado de página. */
+  compacto?: boolean;
+  texto?: string;
 }
 
-/** Lo que se ve en una sección sin sesión: el mismo encabezado y la puerta a Cognito. */
-export default function PideIngreso({ ruta }: Props) {
-  const { eyebrow, titulo } = TEXTOS[ruta];
-  return (
-    <div className="pagina angosta">
-      <header className="encabezado">
-        <p className="eyebrow">{eyebrow}</p>
-        <h1>{titulo}</h1>
-        <p className="lede">
-          Esta sección pide una cuenta. El ingreso lo resuelve Cognito en su propia pantalla: la
-          contraseña nunca pasa por Ateneo.
-        </p>
-      </header>
-      <div className="pide-ingreso">
-        <button type="button" onClick={ingresar}>
-          Ingresar
+/** La puerta a Cognito. La contraseña nunca pasa por Ateneo. */
+export default function PideIngreso({ compacto = false, texto }: Props) {
+  const acciones = (
+    <div className="pide-ingreso">
+      <button type="button" className="pildora pildora-oscura" onClick={ingresar}>
+        Ingresar <Flecha />
+      </button>
+      <p className="suave">
+        ¿Sin cuenta? Registrate como{" "}
+        <button type="button" className="enlace" onClick={() => crearCuenta("publicador")}>
+          publicador
+        </button>{" "}
+        o como{" "}
+        <button type="button" className="enlace" onClick={() => crearCuenta("institucion")}>
+          institución
         </button>
-        <p>
-          ¿No tenés cuenta? Creá una de{" "}
-          <button type="button" className="enlace" onClick={() => crearCuenta("institucion")}>
-            institución
-          </button>{" "}
-          o de{" "}
-          <button type="button" className="enlace" onClick={() => crearCuenta("publicador")}>
-            publicador
-          </button>
-          . Los médicos llegan por invitación de su institución.
-        </p>
+        .
+      </p>
+    </div>
+  );
+
+  if (compacto) {
+    return (
+      <div className="ingreso-compacto">
+        <p>{texto ?? "Ingresá para continuar."}</p>
+        {acciones}
       </div>
+    );
+  }
+
+  return (
+    <div className="marco angosto pagina">
+      <header className="cabecera-pagina centrada">
+        <p className="eyebrow">[Publicar]</p>
+        <h1>Ingresá para publicar</h1>
+        <p className="bajada">{texto ?? "Publicar un modelo requiere una cuenta de publicador."}</p>
+      </header>
+      {acciones}
     </div>
   );
 }

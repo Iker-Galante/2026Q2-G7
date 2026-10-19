@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from .api import dependencias, errores, sitio
-from .api.rutas import estudios, inferencias, modelos, salud
+from .api.rutas import estudios, inferencias, modelos, publico, salud
 from .config import Settings
 
 logging.basicConfig(
@@ -45,6 +45,7 @@ def crear_app() -> FastAPI:
                   docs_url="/api/docs", openapi_url="/api/openapi.json", redoc_url=None)
     errores.registrar(app)
     app.include_router(salud.router)
+    app.include_router(publico.router)      # el catálogo, sin token (ver rutas/publico.py)
     app.include_router(modelos.router)
     app.include_router(estudios.router)
     app.include_router(inferencias.router)

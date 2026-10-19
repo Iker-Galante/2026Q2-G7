@@ -4,19 +4,31 @@ La arquitectura de «Ateneo en AWS 2.0» (Entrega 3) entera en Terraform: `terra
 todo en una cuenta limpia del Learner Lab y `terraform destroy` lo borra, imágenes y buckets
 incluidos. Quien lo corre no necesita Docker.
 
+```
+terraform/
+    organization/   el root module: es acá donde se corre plan y apply
+    modules/
+        cola/       módulo propio: una cola de trabajo con su cola de fallidos
+```
+
+Las dos rutas no son una elección nuestra: los workflows que trae la plantilla de los repos de
+`itba-cloud` las tienen escritas (`tfsec` corre sobre `terraform/organization`, `terraform-docs`
+sobre `terraform/modules`).
+
 | Pieza | Archivo |
 |-------|---------|
 | VPC 10.0.0.0/16: once subredes en seis capas, una tabla de ruteo por capa, un NAT, NACL de evaluación | `red.tf` |
-| Endpoint Gateway de S3 y cuatro de interfaz (`ecr.api`, `ecr.dkr`, `logs`, `sqs`) en subredes propias | `red.tf` |
+| Endpoint Gateway de S3 y cuatro de interfaz (`ecr.api`, `ecr.dkr`, `logs`, `sqs`) en subredes propias | `red.tf`, módulo externo `vpc-endpoints` |
 | Grupos de seguridad encadenados; procesador, worker, evaluador y constructor sin entrada | `seguridad.tf` |
 | API Gateway (HTTP API, HTTPS) → VPC Link → ALB interno + WAF | `api.tf`, `balanceador.tf` |
+| El autorizador JWT en todo `/api/*` salvo `/api/health` y `/api/publico/*`, que es el catálogo que ve el Visitante | `api.tf`, `backend/app/api/rutas/publico.py` |
 | Cognito: cuatro grupos, Hosted UI, Lambda de post-confirmación, admin inicial | `cognito.tf` |
 | El login de la clase: sitio en S3 y Lambda en `/callback` | `cognito.tf`, `api.tf`, `lambda/` |
 | ECS Fargate: api, procesador, worker, evaluador | `ecs.tf`, `escalado.tf` |
 | ECR y el constructor de imágenes | `imagenes.tf`, `plantillas/constructor.sh.tftpl` |
-| SQS: `inferencias`, `evaluaciones`, `resultados`, cada una con su cola de fallidos | `colas.tf` |
+| SQS: `inferencias`, `evaluaciones`, `resultados`, cada una con su cola de fallidos | `colas.tf`, `modules/cola/` |
 | RDS PostgreSQL 16 y su URL en Secrets Manager | `datos.tf` |
-| Cinco buckets: web (el sitio), modelos, estudios, evaluación, artefactos | `s3.tf` |
+| Cinco buckets: web (el sitio), modelos, estudios, evaluación, artefactos | `s3.tf`, `scripts/buckets.sh` |
 | EFS como caché de modelos de los workers | `efs.tf` |
 | SNS y alarmas: colas de fallidos y 5xx del ALB | `alertas.tf` |
 
@@ -37,15 +49,17 @@ nuevas y ECS cambia las tareas de a poco. **Sin cambios, el plan sale vacío.**
 
 ## Primer despliegue
 
-En CloudShell, parado en el clon:
+En CloudShell, parado en el clon. El branch es `alineacion/catalogo-publico-y-escalado`: es el
+único que trae la creación de los buckets por CLI, y sin eso el apply muere en el Learner Lab (más
+abajo, en las restricciones). Cuando ese branch se integre a `entrega3`, los dos sirven.
 
 ```bash
-git clone https://github.com/nnicokim/TP-AWS.git ~/ateneo && cd ~/ateneo && git checkout entrega3
-bash terraform/scripts/bootstrap-estado.sh            # una vez por cuenta: bucket del estado + backend.hcl
-cp terraform/terraform.tfvars.example terraform/terraform.tfvars
-nano terraform/terraform.tfvars                       # email_admin y email_alertas
-bash terraform/scripts/tf.sh apply
-bash terraform/scripts/tf.sh output url
+git clone https://github.com/nnicokim/TP-AWS.git ~/ateneo && cd ~/ateneo && git checkout alineacion/catalogo-publico-y-escalado
+bash terraform/organization/scripts/bootstrap-estado.sh            # una vez por cuenta: bucket del estado + backend.hcl
+cp terraform/organization/terraform.tfvars.example terraform/organization/terraform.tfvars
+nano terraform/organization/terraform.tfvars                       # email_admin y email_alertas
+bash terraform/organization/scripts/tf.sh apply
+bash terraform/organization/scripts/tf.sh output url
 ```
 
 Después:
@@ -89,6 +103,13 @@ este, con el sitio en S3 (cambia también la decisión 11).
 
 - **No crea roles de IAM.** Tareas de ECS, Lambdas y constructor usan `LabRole` o
   `LabInstanceProfile` (se leen con `data`).
+- **Los buckets los crea el CLI, no `aws_s3_bucket`.** El lab tiene un deny explícito sobre
+  `s3:GetBucketObjectLockConfiguration` en una SCP, y el provider lee esa configuración cada vez
+  que refresca un bucket: el apply muere con `AccessDenied` aunque el bucket no use object lock.
+  No se arregla con permisos (una SCP no se sobreescribe) ni pineando el provider. Un paso del
+  apply llama a `scripts/buckets.sh`, que crea lo que falte y al destruir vacía y borra; todo el
+  resto de la configuración de cada bucket la sigue administrando Terraform. Por eso el apply
+  necesita el `aws` CLI en la máquina, igual que para esperar las imágenes.
 - **Sin CloudFront ni dominio propio.** El HTTPS lo pone API Gateway; el sitio es HTTP.
 - **RDS sin Multi-AZ**, solo `us-east-1`, sin instance refresh (ya no hay grupos de EC2).
 - **Credenciales de sesión:** se corre desde CloudShell. `scripts/tf.sh` deja el proveedor de AWS
@@ -101,10 +122,51 @@ este, con el sitio en S3 (cambia también la decisión 11).
 | VPC Link de HTTP API hacia un ALB interno | ALB público que solo acepte un encabezado secreto que agrega API Gateway |
 | Servicios de Fargate (rol vinculado de ECS) y el escalado de Application Auto Scaling | Las mismas imágenes sobre EC2 con Auto Scaling |
 | Cuota de vCPU de Fargate (todo escalado son 8,5 vCPU) | Bajar tamaños y máximos en `ecs.tf` |
+| Container Insights en el cluster (publica `RunningTaskCount`, el divisor del backlog por tarea) | `container_insights = false`: worker y procesador escalan por escalones sobre los mensajes visibles |
 | WAF asociado a un ALB | `waf_activo = false` |
 | Disparador Lambda de Cognito | El backend asigna el grupo en la primera llamada |
 | Push a ECR desde EC2 con `LabInstanceProfile` | Construir con Docker en la máquina de quien corre Terraform |
 | Bucket web público (bloqueo de acceso público a nivel de cuenta) | Servir el sitio desde la api, detrás de API Gateway |
+
+## Lo que marca tfsec, y por qué
+
+El pipeline de la cátedra corre `tfsec` sobre `terraform/organization` y comenta los hallazgos en
+el PR. Hoy son **17, en 9 reglas**: 1 crítico, 1 alto, 2 medios y 13 bajos. Ninguno es un error:
+tfsec lee el código contra una lista genérica de buenas prácticas y no sabe nada de esta
+arquitectura ni del Learner Lab. Lo que sigue contesta cada uno.
+
+Para reproducirlo:
+
+```bash
+docker run --rm -v "$PWD:/src" aquasec/tfsec /src/terraform/organization
+```
+
+### Lo que se arregló
+
+Tres hallazgos que eran gratis y no tenían contra. Los altos pasaron de cuatro a uno.
+
+| Regla | Qué se hizo |
+|-------|-------------|
+| `aws-ecr-enable-image-scans` (alto) | `image_scanning_configuration` en los dos repositorios: al subir, AWS compara las capas contra las vulnerabilidades conocidas. El escaneo básico de ECR no cuesta nada |
+| `aws-elb-drop-invalid-headers` (alto) | `drop_invalid_header_fields` en el ALB: un encabezado HTTP malformado se tira ahí en vez de llegar a la api |
+| `aws-rds-enable-iam-auth` (medio) | `iam_database_authentication_enabled`: queda habilitado aunque la aplicación siga entrando con la contraseña de Secrets Manager. No cambia nada de cómo se conecta |
+
+### Lo que queda, y por qué
+
+| Severidad | Regla | Respuesta |
+|-----------|-------|-----------|
+| **CRÍTICO** | `aws-elb-http-not-used` | El listener del ALB es HTTP:80, y así se queda. Ese ALB es `internal = true`: no tiene IP pública y lo único que lo alcanza es el VPC Link de API Gateway, encadenado por grupos de seguridad. El HTTPS que ve el usuario lo termina API Gateway. HTTPS en ese tramo necesitaría un certificado para un nombre interno, o sea dominio propio y ACM, que es lo que el lab no da (es el riesgo 09 de la arquitectura) |
+| **ALTO** | `aws-sns-enable-topic-encryption` | Cifrar el topic con la clave que administra AWS **rompe las alarmas**: CloudWatch no puede publicar en un topic cifrado con `alias/aws/sns`, porque esa política de clave no se puede editar. Hacerlo bien pide una CMK con una política que le dé permiso a `cloudwatch.amazonaws.com`: una pieza más, un dólar por mes y algo que el lab puede no permitir. El topic solo lleva alertas de operación a los admins, no datos de pacientes |
+| MEDIO | `aws-ec2-require-vpc-flow-logs-for-all-vpcs` | Los flow logs se pagan por GB ingerido en CloudWatch. En un lab con crédito finito, no |
+| MEDIO | `aws-rds-enable-deletion-protection` | **A propósito en `false`.** La regla de uso es destruir al terminar cada sesión; con la protección puesta, `terraform destroy` falla y la base sigue cobrando |
+| BAJO ×7 | `aws-cloudwatch-log-group-customer-key` | Los grupos de logs ya se cifran con la clave de CloudWatch. Una clave propia por grupo son siete claves a ~USD 1 por mes |
+| BAJO ×2 | `aws-ecr-repository-customer-key` | Igual: ECR cifra con la clave de AWS; una CMK por repositorio es plata que no compra nada acá |
+| BAJO ×2 | `aws-lambda-enable-tracing` | X-Ray en las dos Lambdas del login. Suma una dependencia y un costo por traza para dos funciones que se invocan una vez por inicio de sesión |
+| BAJO | `aws-rds-enable-performance-insights` | `db.t3.micro` lo soporta y siete días de retención son gratis, pero habilitarlo abre un hallazgo **alto** nuevo (`aws-rds-enable-performance-insights-encryption`), que pide una CMK para cifrar esos datos. Cambiar un bajo por un alto no es una mejora |
+| BAJO | `aws-ssm-secret-use-customer-key` | El secreto con la URL de la base ya se cifra con la clave de Secrets Manager |
+
+No hay ningún `tfsec:ignore` en el código, a propósito: preferimos que el hallazgo aparezca en el
+PR y que la respuesta esté acá, en vez de silenciarlo.
 
 ## Un equipo de varias personas
 
@@ -118,8 +180,85 @@ finales de línea CRLF da otro hash que uno de Linux. Corré Terraform siempre d
 ## Pruebas sin cuenta
 
 ```bash
-cd terraform
+cd terraform/organization
 terraform init -backend=false
 terraform validate
 terraform test          # la arquitectura del HTML contra un AWS simulado: red, cómputo, login, variables
 ```
+
+## Módulos, funciones y meta-argumentos
+
+Lo que pide la entrega, y dónde está.
+
+### Módulos
+
+| | Módulo | Dónde se llama | Qué encapsula |
+|-|--------|----------------|----------------|
+| **propio** | [`modules/cola`](modules/cola/README.md) | `organization/colas.tf`, con `for_each` sobre las tres colas | La cola, su cola de fallidos y las dos políticas que las emparejan. La arquitectura dice que ninguna cola de trabajo va sin su DLQ (sección 08, decisión 03): acá no se puede olvidar. 6 variables con `validation`, 7 salidas. |
+| **externo** | [`terraform-aws-modules/vpc/aws//modules/vpc-endpoints`](https://registry.terraform.io/modules/terraform-aws-modules/vpc/aws/6.7.3/submodules/vpc-endpoints) `6.7.3` | `organization/red.tf` | Los cinco endpoints de la VPC. Resuelve en un lugar la diferencia entre un gateway (lleva tablas de ruteo) y uno de interfaz (lleva subredes, grupo y DNS privado). |
+
+La versión del módulo externo está fijada exacta, no con `~>`: el lock de Terraform solo fija
+proveedores, así que esa línea es lo único que garantiza que la cátedra baje lo mismo que probamos.
+
+### Meta-argumentos
+
+| Meta-argumento | Usos | Un ejemplo |
+|----------------|------|------------|
+| `for_each` | 33 | Las once subredes salen de un mapa de capas (`red.tf`); los cuatro servicios de Fargate, de `local.servicios` (`ecs.tf`) |
+| `depends_on` | 15 | Cada configuración de bucket espera a `terraform_data.buckets`, porque los buckets no los crea el proveedor (`s3.tf`) |
+| `count` | 6 | La suscripción de SNS existe solo si hay un mail de alertas (`alertas.tf`) |
+| `lifecycle` | 2 | `ignore_changes` en el `desired_count` de los servicios, que lo maneja el escalado (`ecs.tf`), y en la AMI del constructor, que cambia sola cada tanto (`imagenes.tf`) |
+
+### Funciones
+
+26 distintas. Las que hacen algo que se nota:
+
+| Función | Para qué |
+|---------|----------|
+| `fileset`, `filesha256`, `sha256`, `substr` | La etiqueta de las imágenes es el hash del código del repositorio: si no cambia el código, el plan sale vacío (`imagenes.tf`) |
+| `templatefile` | El script del constructor, que se arma con las direcciones de la cuenta (`imagenes.tf`) |
+| `jsonencode`, `jsondecode` | Las políticas de los buckets y de las colas |
+| `merge` | Las once subredes, aplanando el mapa de capas; y los cinco endpoints, juntando el gateway con los cuatro de interfaz (`red.tf`) |
+| `can`, `regex` | Las validaciones de `modules/cola`: un nombre que no sirve para una cola de SQS falla en el plan, no en el apply |
+| `abspath` | La ruta del script de los buckets y la raíz del repositorio, que no dependen de desde dónde se corra |
+| `toset`, `keys`, `flatten`, `distinct`, `sort`, `concat`, `length`, `contains`, `strcontains`, `split`, `join`, `replace`, `upper`, `endswith`, `file` | El resto, repartidas |
+
+Hay además 11 variables y 10 salidas en el root, y 5 bloques `validation`.
+
+## El pipeline de GitHub Actions
+
+Cuatro workflows en `.github/workflows/`. La división es por si necesitan credenciales de AWS o
+no, porque las del Learner Lab vencen cada sesión:
+
+| Workflow | Cuándo corre | Toca AWS | Qué hace |
+|----------|--------------|----------|----------|
+| `validar.yml` | solo, en cada push y cada PR | no | `fmt -check`, `init -backend=false`, `validate`, `test` |
+| `plan.yml` | en el PR hacia `main`, y a mano | sí | bucket del estado y `tf.sh plan`; guarda el plan como artifact |
+| `aplicar.yml` | **solo a mano**, escribiendo «aplicar» | sí | `tf.sh apply`; imprime el sitio y el admin inicial |
+| `destruir.yml` | **solo a mano**, escribiendo «destruir» | sí | `tf.sh destroy` |
+
+`validar` es el que tiene que estar siempre verde: no depende de credenciales. `plan` avisa en el
+resumen y termina en verde si los secrets están vacíos, en lugar de pintar el PR de rojo.
+
+Los workflows no repiten comandos: llaman a `scripts/bootstrap-estado.sh` y `scripts/tf.sh`, los
+mismos que usa una persona en CloudShell. Así el pipeline no puede desalinearse de esta guía.
+
+Aplicar y destruir no se disparan con un push, a propósito: el lab cuesta unos USD 7 por día
+prendido y la regla de uso es destruir al terminar: prenderlo es una decisión de una persona.
+Los tres comparten `concurrency: infraestructura`, así que nunca corren dos a la vez contra la
+misma cuenta.
+
+### Secrets que hay que cargar en el repositorio
+
+En Settings → Secrets and variables → Actions → New repository secret:
+
+| Secret | De dónde sale |
+|--------|---------------|
+| `AWS_ACCESS_KEY_ID` | AWS Details → AWS CLI en el Learner Lab |
+| `AWS_SECRET_ACCESS_KEY` | idem |
+| `AWS_SESSION_TOKEN` | idem |
+| `EMAIL_ADMIN` | el mail del `admin_plataforma` inicial |
+| `EMAIL_ALERTAS` | el mail que recibe las alarmas de operación |
+
+Las tres primeras **vencen cada sesión del lab** (unas cuatro horas): hay que volver a pegarlas
+antes de correr `plan`, `aplicar` o `destruir`.

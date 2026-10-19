@@ -118,7 +118,7 @@ export default function CargadorImagen({
           </span>
           <span className="suave">{tamanoLegible(archivo.size)}</span>
           {tipoEstudio && <span className="chip">{tipoEstudio}</span>}
-          <button type="button" className="secundario" onClick={onQuitar} disabled={deshabilitado}>
+          <button type="button" className="pildora pildora-borde chica" onClick={onQuitar} disabled={deshabilitado}>
             Quitar
           </button>
         </div>

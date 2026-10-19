@@ -1,0 +1,82 @@
+name: Plan
+
+# Necesita las credenciales del lab, que vencen cada sesión (unas 4 horas). Si no están cargadas
+# en los secrets, el job termina en verde avisándolo en el resumen en vez de pintar el PR de rojo:
+# el chequeo que tiene que estar siempre verde es «Validar», que no toca AWS.
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Un solo comando de Terraform a la vez contra la misma cuenta: el estado se bloquea con un
+# .tflock en su bucket, y dos jobs en paralelo se pelearían por él.
+concurrency:
+  group: infraestructura
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: Terraform Plan
+    runs-on: ubuntu-latest
+
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
+      AWS_REGION: us-east-1
+      TF_IN_AUTOMATION: true
+      TF_INPUT: false
+      TF_VAR_email_admin: ${{ secrets.EMAIL_ADMIN }}
+      TF_VAR_email_alertas: ${{ secrets.EMAIL_ALERTAS }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.16.5
+          terraform_wrapper: false
+
+      - name: ¿Hay credenciales del lab?
+        id: credenciales
+        shell: bash
+        run: |
+          if [ -n "$AWS_ACCESS_KEY_ID" ] && [ -n "$AWS_SESSION_TOKEN" ]; then
+            echo "hay=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "hay=false" >> "$GITHUB_OUTPUT"
+            echo 'Sin credenciales del lab en los secrets: no se corrió el plan.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # El bucket del estado se crea fuera de Terraform (no puede guardar el estado del bucket que
+      # está creando) y el script escribe backend.hcl, que es lo que lee el init. Es idempotente.
+      - name: Bucket del estado
+        if: steps.credenciales.outputs.hay == 'true'
+        run: bash terraform/organization/scripts/bootstrap-estado.sh
+
+      - name: Plan
+        if: steps.credenciales.outputs.hay == 'true'
+        shell: bash
+        run: bash terraform/organization/scripts/tf.sh plan -no-color | tee plan.txt
+
+      - name: Resumen
+        if: steps.credenciales.outputs.hay == 'true'
+        shell: bash
+        run: |
+          {
+            echo '## terraform plan'
+            echo '```'
+            tail -c 60000 plan.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Guardar el plan
+        if: steps.credenciales.outputs.hay == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: plan-${{ github.run_id }}
+          path: plan.txt
+          retention-days: 7

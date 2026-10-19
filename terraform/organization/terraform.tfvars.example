@@ -1,0 +1,20 @@
+# cp terraform.tfvars.example terraform.tfvars  (terraform.tfvars no se commitea)
+
+# El admin_plataforma inicial: Cognito le manda una contraseña temporal por mail.
+email_admin = ""
+
+# Recibe las alarmas de operación (colas de fallidos, 5xx del ALB). Hay que confirmar la suscripción.
+email_alertas = ""
+
+# Sufijo de los buckets y del dominio de Cognito. Vacío = uno al azar que queda fijo en el estado.
+sufijo = ""
+
+# El constructor siembra el modelo de la E2 y el conjunto de 200 casos de Hugging Face.
+datos_demo = true
+
+# false si el laboratorio no deja asociar un WAF al ALB.
+waf_activo = true
+
+# Container Insights: publica RunningTaskCount, el divisor con el que escalan worker y procesador.
+# false si el laboratorio no lo permite; ahí los dos escalan por mensajes a secas.
+container_insights = true

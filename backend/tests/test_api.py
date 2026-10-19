@@ -130,7 +130,7 @@ def test_preparar_subida_422_sin_tamano(cliente):
 def test_modelo_404(cliente):
     app, c = cliente
     app.dependency_overrides[dependencias.dep_consultar_modelo] = lambda: CasoFalso(error=NoEncontrado("nope"))
-    assert c.get(f"/api/modelos/{uuid4()}").status_code == 404
+    assert c.get(f"/api/publico/modelos/{uuid4()}").status_code == 404
 
 
 def test_trabajo_respuesta(cliente):
@@ -149,8 +149,8 @@ def test_ruta_desconocida_bajo_api_es_404_json(cliente):
 def test_con_cognito_sin_token_es_401(cliente):
     app, c = cliente
     app.dependency_overrides[dependencias.dep_verificador] = lambda: VerificadorFalso()
-    app.dependency_overrides[dependencias.dep_listar_modelos] = lambda: CasoFalso(resultado=[])
-    r = c.get("/api/modelos")
+    app.dependency_overrides[dependencias.dep_listar_disponibles] = lambda: CasoFalso(resultado=[])
+    r = c.get("/api/modelos/disponibles")
     assert r.status_code == 401 and r.json()["error"] == "no_autenticado"
 
 
@@ -158,16 +158,16 @@ def test_con_cognito_token_invalido_es_401(cliente):
     app, c = cliente
     verificador = VerificadorFalso()
     app.dependency_overrides[dependencias.dep_verificador] = lambda: verificador
-    app.dependency_overrides[dependencias.dep_listar_modelos] = lambda: CasoFalso(resultado=[])
-    r = c.get("/api/modelos", headers={"Authorization": "Bearer vencido"})
+    app.dependency_overrides[dependencias.dep_listar_disponibles] = lambda: CasoFalso(resultado=[])
+    r = c.get("/api/modelos/disponibles", headers={"Authorization": "Bearer vencido"})
     assert r.status_code == 401 and verificador.vistos == ["vencido"]
 
 
 def test_con_cognito_token_valido_pasa(cliente):
     app, c = cliente
     app.dependency_overrides[dependencias.dep_verificador] = lambda: VerificadorFalso()
-    app.dependency_overrides[dependencias.dep_listar_modelos] = lambda: CasoFalso(resultado=[])
-    r = c.get("/api/modelos", headers={"Authorization": "Bearer bueno"})
+    app.dependency_overrides[dependencias.dep_listar_disponibles] = lambda: CasoFalso(resultado=[])
+    r = c.get("/api/modelos/disponibles", headers={"Authorization": "Bearer bueno"})
     assert r.status_code == 200 and r.json() == []
 
 
@@ -175,3 +175,28 @@ def test_health_no_pide_token(cliente):
     app, c = cliente
     app.dependency_overrides[dependencias.dep_verificador] = lambda: VerificadorFalso()
     assert c.get("/api/health").status_code == 200
+
+
+def test_el_catalogo_se_ve_sin_token(cliente):
+    """El Visitante de la spec: la portada muestra el catálogo sin que nadie haya ingresado."""
+    app, c = cliente
+    app.dependency_overrides[dependencias.dep_verificador] = lambda: VerificadorFalso()
+    app.dependency_overrides[dependencias.dep_listar_modelos] = lambda: CasoFalso(resultado=[_modelo()])
+    r = c.get("/api/publico/modelos")
+    assert r.status_code == 200 and [m["nombre"] for m in r.json()] == ["torax"]
+
+
+def test_la_ficha_del_catalogo_se_ve_sin_token(cliente):
+    app, c = cliente
+    m = _modelo()
+    app.dependency_overrides[dependencias.dep_verificador] = lambda: VerificadorFalso()
+    app.dependency_overrides[dependencias.dep_consultar_modelo] = lambda: CasoFalso(resultado=m)
+    r = c.get(f"/api/publico/modelos/{m.id}")
+    assert r.status_code == 200 and r.json()["id"] == str(m.id)
+
+
+def test_bajo_publico_solo_esta_el_catalogo(cliente):
+    """API Gateway exime el prefijo entero, así que nada más puede colgar de /api/publico/."""
+    app, _ = cliente
+    rutas = sorted(r.path for r in app.routes if getattr(r, "path", "").startswith("/api/publico"))
+    assert rutas == ["/api/publico/modelos", "/api/publico/modelos/{modelo_id}"]

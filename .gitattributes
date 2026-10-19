@@ -5,3 +5,5 @@
 *.env.example text eol=lf
 *.sql   text eol=lf
 *.tftpl text eol=lf
+*.yml  text eol=lf
+*.yaml  text eol=lf

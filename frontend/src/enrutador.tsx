@@ -1,21 +1,32 @@
-// Ruteo del lado del cliente, tres rutas y sin librerías.
+// Ruteo del lado del cliente, sin librerías.
 //
-// El backend devuelve index.html para cualquier ruta fuera de /api (sitio.py),
-// así que History API alcanza: no hace falta hash ni configuración de servidor.
-// Si algún día entra react-router, lo único que cambia es este archivo y el
-// componente Enlace; las páginas y los hooks no lo notan.
+// El backend (sitio.py) y el bucket web (error_document) devuelven index.html para
+// cualquier ruta fuera de /api, así que History API alcanza. Si algún día entra
+// react-router, lo único que cambia es este archivo y el componente Enlace.
 
 import { useSyncExternalStore } from "react";
 import type { MouseEvent, ReactNode } from "react";
 
-const RUTAS = ["/", "/publicar", "/consulta"] as const;
+export type Ruta =
+  | { vista: "inicio" }
+  | { vista: "modelos" }
+  | { vista: "modelo"; id: string }
+  | { vista: "publicar" };
 
-export type Ruta = (typeof RUTAS)[number];
+const FICHA = /^\/modelos\/([^/]+)$/;
 
-/** Cualquier ruta desconocida cae en el inicio. */
-function normalizar(pathname: string): Ruta {
+/** Cualquier ruta desconocida cae en el inicio. /consulta quedó de la versión anterior. */
+export function leerRuta(pathname: string): Ruta {
   const limpia = pathname.replace(/\/+$/, "") || "/";
-  return (RUTAS as readonly string[]).includes(limpia) ? (limpia as Ruta) : "/";
+  if (limpia === "/modelos" || limpia === "/consulta") return { vista: "modelos" };
+  if (limpia === "/publicar") return { vista: "publicar" };
+  const ficha = FICHA.exec(limpia);
+  if (ficha) return { vista: "modelo", id: decodeURIComponent(ficha[1]) };
+  return { vista: "inicio" };
+}
+
+export function rutaDeModelo(id: string): string {
+  return `/modelos/${encodeURIComponent(id)}`;
 }
 
 const oyentes = new Set<() => void>();
@@ -35,27 +46,34 @@ function suscribir(oyente: () => void): () => void {
 
 const leer = (): string => window.location.pathname;
 
-/** Ruta actual; se re-renderiza al navegar o al usar atrás/adelante. */
-export function useRuta(): Ruta {
-  return normalizar(useSyncExternalStore(suscribir, leer, () => "/"));
+/** El pathname actual; se re-renderiza al navegar o al usar atrás/adelante. */
+export function useCamino(): string {
+  return useSyncExternalStore(suscribir, leer, () => "/");
 }
 
-export function navegar(ruta: Ruta): void {
-  if (normalizar(window.location.pathname) === ruta) return;
-  window.history.pushState({}, "", ruta);
+export function useRuta(): Ruta {
+  return leerRuta(useCamino());
+}
+
+export function navegar(camino: string): void {
+  if (window.location.pathname === camino) return;
+  window.history.pushState({}, "", camino);
   window.scrollTo({ top: 0 });
   avisar();
 }
 
 interface PropsEnlace {
-  a: Ruta;
+  a: string;
   className?: string;
+  /** Marca el enlace como actual también en las rutas que cuelgan de él (/modelos/…). */
+  prefijo?: boolean;
   children: ReactNode;
 }
 
 /** <a> real (se puede abrir en otra pestaña) que navega sin recargar. */
-export function Enlace({ a, className, children }: PropsEnlace) {
-  const actual = useRuta();
+export function Enlace({ a, className, prefijo = false, children }: PropsEnlace) {
+  const actual = useCamino();
+  const esActual = actual === a || (prefijo && actual.startsWith(`${a}/`));
 
   const alHacerClic = (e: MouseEvent<HTMLAnchorElement>) => {
     // Ctrl/Cmd/Shift o botón del medio: que lo maneje el navegador.
@@ -67,7 +85,7 @@ export function Enlace({ a, className, children }: PropsEnlace) {
   };
 
   return (
-    <a href={a} className={className} aria-current={actual === a ? "page" : undefined} onClick={alHacerClic}>
+    <a href={a} className={className} aria-current={esActual ? "page" : undefined} onClick={alHacerClic}>
       {children}
     </a>
   );
