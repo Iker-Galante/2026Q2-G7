@@ -41,7 +41,7 @@ jobs:
 
       # El bucket del estado no se borra: lo necesita el próximo apply y vacío no cuesta nada.
       - name: Bucket del estado
-        run: bash terraform/scripts/bootstrap-estado.sh
+        run: bash terraform/organization/scripts/bootstrap-estado.sh
 
       - name: Destroy
-        run: bash terraform/scripts/tf.sh destroy -auto-approve -no-color
+        run: bash terraform/organization/scripts/tf.sh destroy -auto-approve -no-color

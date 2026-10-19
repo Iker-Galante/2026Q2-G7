@@ -11,7 +11,7 @@ Uso:
   python tools/descargar_modelo.py --contrato            # imprime el modelo.json y sale
 
 En CloudShell, sin tocar el disco:
-  BUCKET_MODELOS=$(bash terraform/scripts/tf.sh output -json buckets | python3 -c "import json,sys;print(json.load(sys.stdin)['modelos'])")
+  BUCKET_MODELOS=$(bash terraform/organization/scripts/tf.sh output -json buckets | python3 -c "import json,sys;print(json.load(sys.stdin)['modelos'])")
   P=s3://$BUCKET_MODELOS/modelos/torax-rx-neumonia/1.0.0
   curl -sL <URL_ONNX> | aws s3 cp - $P/modelo.onnx
   python3 tools/descargar_modelo.py --contrato | aws s3 cp - $P/modelo.json

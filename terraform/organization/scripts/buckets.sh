@@ -1,8 +1,8 @@
 #!/bin/bash
 # buckets.sh — crea y borra los buckets de la aplicación con el CLI, porque el provider no puede.
 #
-#   bash terraform/scripts/buckets.sh crear  ateneo-modelos-abc123
-#   bash terraform/scripts/buckets.sh borrar ateneo-modelos-abc123
+#   bash terraform/organization/scripts/buckets.sh crear  ateneo-modelos-abc123
+#   bash terraform/organization/scripts/buckets.sh borrar ateneo-modelos-abc123
 #
 # Lo llama Terraform (s3.tf, terraform_data.buckets); no hace falta correrlo a mano.
 #

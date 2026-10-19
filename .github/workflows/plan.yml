@@ -55,12 +55,12 @@ jobs:
       # está creando) y el script escribe backend.hcl, que es lo que lee el init. Es idempotente.
       - name: Bucket del estado
         if: steps.credenciales.outputs.hay == 'true'
-        run: bash terraform/scripts/bootstrap-estado.sh
+        run: bash terraform/organization/scripts/bootstrap-estado.sh
 
       - name: Plan
         if: steps.credenciales.outputs.hay == 'true'
         shell: bash
-        run: bash terraform/scripts/tf.sh plan -no-color | tee plan.txt
+        run: bash terraform/organization/scripts/tf.sh plan -no-color | tee plan.txt
 
       - name: Resumen
         if: steps.credenciales.outputs.hay == 'true'

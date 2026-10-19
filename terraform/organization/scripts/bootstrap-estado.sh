@@ -1,12 +1,12 @@
 #!/bin/bash
 # bootstrap-estado.sh — crea, una sola vez, el bucket donde Terraform guarda su estado.
 #
-#   bash terraform/scripts/bootstrap-estado.sh
+#   bash terraform/organization/scripts/bootstrap-estado.sh
 #
 # El estado tiene la contraseña de la base y los ids de todo lo creado: va en un bucket
 # privado, cifrado y versionado, separado de los cinco de la aplicación (que Terraform sí
 # administra y podría borrar). Lo bloquea un archivo .tflock en el mismo bucket (use_lockfile).
-# Escribe terraform/backend.hcl, que lee "terraform init -backend-config=backend.hcl".
+# Escribe terraform/organization/backend.hcl, que lee "terraform init -backend-config=backend.hcl".
 set -euo pipefail
 export AWS_PAGER=""
 cd "$(dirname "$0")/.."
@@ -32,4 +32,4 @@ region       = "$REGION"
 encrypt      = true
 use_lockfile = true
 FIN
-echo "escrito terraform/backend.hcl"
+echo "escrito terraform/organization/backend.hcl"

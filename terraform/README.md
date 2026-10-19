@@ -42,11 +42,11 @@ En CloudShell, parado en el clon:
 
 ```bash
 git clone https://github.com/nnicokim/TP-AWS.git ~/ateneo && cd ~/ateneo && git checkout entrega3
-bash terraform/scripts/bootstrap-estado.sh            # una vez por cuenta: bucket del estado + backend.hcl
-cp terraform/terraform.tfvars.example terraform/terraform.tfvars
-nano terraform/terraform.tfvars                       # email_admin y email_alertas
-bash terraform/scripts/tf.sh apply
-bash terraform/scripts/tf.sh output url
+bash terraform/organization/scripts/bootstrap-estado.sh            # una vez por cuenta: bucket del estado + backend.hcl
+cp terraform/organization/terraform.tfvars.example terraform/organization/terraform.tfvars
+nano terraform/organization/terraform.tfvars                       # email_admin y email_alertas
+bash terraform/organization/scripts/tf.sh apply
+bash terraform/organization/scripts/tf.sh output url
 ```
 
 Después:
@@ -127,7 +127,7 @@ finales de línea CRLF da otro hash que uno de Linux. Corré Terraform siempre d
 ## Pruebas sin cuenta
 
 ```bash
-cd terraform
+cd terraform/organization
 terraform init -backend=false
 terraform validate
 terraform test          # la arquitectura del HTML contra un AWS simulado: red, cómputo, login, variables

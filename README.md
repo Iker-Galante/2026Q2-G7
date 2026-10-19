@@ -92,9 +92,9 @@ Ver [terraform/README.md](terraform/README.md). En CloudShell:
 
 ```bash
 git clone https://github.com/nnicokim/TP-AWS.git ~/ateneo && cd ~/ateneo && git checkout entrega3
-bash terraform/scripts/bootstrap-estado.sh                 # una vez por cuenta
-cp terraform/terraform.tfvars.example terraform/terraform.tfvars   # email_admin y email_alertas
-bash terraform/scripts/tf.sh apply                          # todo: red, base, imágenes, servicios
-bash terraform/scripts/tf.sh output url                     # el sitio
-bash terraform/scripts/tf.sh destroy                        # al terminar cada sesión de trabajo
+bash terraform/organization/scripts/bootstrap-estado.sh                 # una vez por cuenta
+cp terraform/organization/terraform.tfvars.example terraform/organization/terraform.tfvars   # email_admin y email_alertas
+bash terraform/organization/scripts/tf.sh apply                          # todo: red, base, imágenes, servicios
+bash terraform/organization/scripts/tf.sh output url                     # el sitio
+bash terraform/organization/scripts/tf.sh destroy                        # al terminar cada sesión de trabajo
 ```

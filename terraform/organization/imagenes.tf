@@ -27,7 +27,7 @@ resource "aws_ecr_lifecycle_policy" "r" {
 # --- El código: qué entra en las imágenes y su hash -----------------------------------
 
 locals {
-  raiz = abspath("${path.module}/..")
+  raiz = abspath("${path.module}/../..")
 
   # Lo que leen los Dockerfiles, y nada más (ni tmp/, ni node_modules, ni el estado).
   carpetas_codigo = ["backend/app", "worker", "evaluador", "ateneo_ml", "migraciones", "tools", "docker", "frontend/src"]
