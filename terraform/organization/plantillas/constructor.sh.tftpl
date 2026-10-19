@@ -19,6 +19,40 @@ mkdir -p /opt/ateneo && cd /opt/ateneo
 aws s3 cp "s3://${bucket_artefactos}/${clave_codigo}" codigo.zip --region ${region}
 unzip -q -o codigo.zip
 
+# El registro resuelve por el DNS privado del endpoint ecr.dkr, y `docker login` no reintenta: un
+# solo timeout abortaba el constructor entero (set -e) y la instancia se apagaba sin imagenes.
+# Asi que primero se espera a que el registro responda. /v2/ sin credenciales devuelve 401, que
+# para curl es una respuesta: alcanza para saber que se llega.
+#
+# Si no entra, el log dice a que IP resolvio el nombre y si el 443 abre, que es lo que distingue
+# los tres casos posibles: el DNS privado no resolvio (IP publica y sin NAT), resolvio al endpoint
+# pero el grupo de seguridad o la ruta no dejan pasar (no abre), o el endpoint no esta listo.
+diagnostico_registro() {
+  echo "--- diagnostico de ${registro}"
+  echo "resuelve a: $(getent hosts ${registro} || echo 'NO RESUELVE')"
+  if timeout 10 bash -c "cat < /dev/null > /dev/tcp/${registro}/443" 2>/dev/null; then
+    echo "443: abre"
+  else
+    echo "443: NO abre"
+  fi
+  echo "resolv.conf: $(grep -h nameserver /etc/resolv.conf | tr '
+' ' ')"
+}
+
+for intento in $(seq 1 15); do
+  if curl -s -o /dev/null --max-time 10 "https://${registro}/v2/"; then
+    echo "el registro responde (intento $intento)"
+    break
+  fi
+  if [ "$intento" = 15 ]; then
+    echo "el registro no respondio en cinco minutos" >&2
+    diagnostico_registro
+    exit 1
+  fi
+  echo "el registro todavia no responde (intento $intento), reintento en 20s"
+  sleep 20
+done
+
 aws ecr get-login-password --region ${region} | docker login --username AWS --password-stdin ${registro}
 
 # Las etiquetas son inmutables: si la imagen de esta versión ya está, no se vuelve a construir.
