@@ -14,13 +14,13 @@ resource "aws_sns_topic_subscription" "mail" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "fallidos" {
-  for_each = aws_sqs_queue.fallidos
+  for_each = local.colas
 
   alarm_name          = "ateneo-${each.key}-con-fallidos"
-  alarm_description   = "Hay mensajes de ${each.key} que agotaron sus intentos y quedaron en ${each.value.name}."
+  alarm_description   = "Hay mensajes de ${each.key} que agotaron sus intentos y quedaron en ${module.colas[each.key].nombre_fallidos}."
   namespace           = "AWS/SQS"
   metric_name         = "ApproximateNumberOfMessagesVisible"
-  dimensions          = { QueueName = each.value.name }
+  dimensions          = { QueueName = module.colas[each.key].nombre_fallidos }
   statistic           = "Maximum"
   period              = 60
   evaluation_periods  = 1

@@ -23,7 +23,7 @@ resource "aws_ecs_cluster" "ateneo" {
 }
 
 locals {
-  colas_url = { for k, q in aws_sqs_queue.cola : "COLA_${upper(k)}_URL" => q.url }
+  colas_url = { for k, c in module.colas : "COLA_${upper(k)}_URL" => c.url }
 
   servicios = {
     api = {

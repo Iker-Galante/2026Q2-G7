@@ -40,7 +40,7 @@ output "buckets" {
 }
 
 output "colas" {
-  value = { for k, q in aws_sqs_queue.cola : k => q.url }
+  value = { for k, c in module.colas : k => c.url }
 }
 
 output "endpoint_rds" {

@@ -90,7 +90,7 @@ resource "aws_appautoscaling_policy" "backlog" {
             metric_name = "ApproximateNumberOfMessagesVisible"
             dimensions {
               name  = "QueueName"
-              value = aws_sqs_queue.cola[each.value.cola].name
+              value = module.colas[each.value.cola].nombre
             }
           }
         }
@@ -180,7 +180,7 @@ resource "aws_cloudwatch_metric_alarm" "cola_con_trabajo" {
   alarm_description   = "Hay mensajes esperando en ${each.value.cola}: una tarea más de ${each.key}."
   namespace           = "AWS/SQS"
   metric_name         = "ApproximateNumberOfMessagesVisible"
-  dimensions          = { QueueName = aws_sqs_queue.cola[each.value.cola].name }
+  dimensions          = { QueueName = module.colas[each.value.cola].nombre }
   statistic           = "Maximum"
   period              = 60
   evaluation_periods  = 1
@@ -207,7 +207,7 @@ resource "aws_cloudwatch_metric_alarm" "cola_vacia" {
     metric {
       namespace   = "AWS/SQS"
       metric_name = "ApproximateNumberOfMessagesVisible"
-      dimensions  = { QueueName = aws_sqs_queue.cola[each.value.cola].name }
+      dimensions  = { QueueName = module.colas[each.value.cola].nombre }
       period      = 60
       stat        = "Maximum"
     }
@@ -218,7 +218,7 @@ resource "aws_cloudwatch_metric_alarm" "cola_vacia" {
     metric {
       namespace   = "AWS/SQS"
       metric_name = "ApproximateNumberOfMessagesNotVisible"
-      dimensions  = { QueueName = aws_sqs_queue.cola[each.value.cola].name }
+      dimensions  = { QueueName = module.colas[each.value.cola].nombre }
       period      = 60
       stat        = "Maximum"
     }

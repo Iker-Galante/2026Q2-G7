@@ -167,7 +167,7 @@ run "computo" {
     error_message = "Las imágenes llevan el hash del código como etiqueta."
   }
   assert {
-    condition     = [for k in ["inferencias", "evaluaciones", "resultados"] : jsondecode(aws_sqs_queue.cola[k].redrive_policy).maxReceiveCount] == [3, 2, 5]
+    condition     = [for k in ["inferencias", "evaluaciones", "resultados"] : jsondecode(module.colas[k].redrive_policy).maxReceiveCount] == [3, 2, 5]
     error_message = "Tres colas, cada una con su cola de fallidos: 3, 2 y 5 intentos."
   }
   assert {
