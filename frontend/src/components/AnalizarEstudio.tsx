@@ -16,7 +16,6 @@ export default function AnalizarEstudio({ modelo }: { modelo: Modelo }) {
 
   const cabecera = (
     <header className="panel-cabecera">
-      <p className="eyebrow">[Analizar]</p>
       <h2>Analizar un estudio</h2>
     </header>
   );

@@ -40,7 +40,6 @@ export default function PideIngreso({ compacto = false, texto }: Props) {
   return (
     <div className="marco angosto pagina">
       <header className="cabecera-pagina centrada">
-        <p className="eyebrow">[Publicar]</p>
         <h1>Ingresá para publicar</h1>
         <p className="bajada">{texto ?? "Publicar un modelo requiere una cuenta de publicador."}</p>
       </header>

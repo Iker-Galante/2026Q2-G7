@@ -71,7 +71,6 @@ export default function FichaModelo({ id }: { id: string }) {
       <div className="ficha-cuerpo">
         <section className="panel" aria-labelledby="titulo-rendimiento">
           <header className="panel-cabecera">
-            <p className="eyebrow">[Rendimiento]</p>
             <h2 id="titulo-rendimiento">Evaluación sobre datos reservados</h2>
           </header>
           <RendimientoModelo modelo={modelo} />

@@ -95,7 +95,6 @@ export default function Inicio() {
 
       <section className="marco seccion">
         <header className="cabecera-seccion">
-          <p className="eyebrow">[Modelos evaluados]</p>
           <h2 className="titular">
             IA clínica medida
             <br />
@@ -124,12 +123,7 @@ export default function Inicio() {
 
       <section className="marco seccion">
         <header className="cabecera-seccion">
-          <p className="eyebrow">[Cómo funciona]</p>
-          <h2 className="titular">
-            Tres pasos,
-            <br />
-            una frontera
-          </h2>
+          <h2 className="titular">Cómo funciona?</h2>
         </header>
 
         <ol className="pasos-inicio">

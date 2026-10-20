@@ -47,7 +47,6 @@ export default function Modelos() {
     <div className="marco pagina">
       <header className="cabecera-pagina">
         <div>
-          <p className="eyebrow">[Catálogo]</p>
           <h1>Modelos</h1>
           <p className="bajada">Todos evaluados contra el mismo conjunto reservado de su tipo de estudio.</p>
         </div>

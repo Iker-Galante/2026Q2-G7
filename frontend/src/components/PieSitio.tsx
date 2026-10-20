@@ -1,5 +1,4 @@
 import type { Salud } from "../api/tipos";
-import { Enlace } from "../enrutador";
 import EstadoApi from "./EstadoApi";
 import Marca from "./Marca";
 
@@ -16,11 +15,6 @@ export default function PieSitio({ salud, consultado }: Props) {
           <Marca tamano={20} />
           <span>Ateneo</span>
         </div>
-
-        <nav className="pie-enlaces" aria-label="Secciones">
-          <Enlace a="/modelos">Modelos</Enlace>
-          <Enlace a="/publicar">Publicar</Enlace>
-        </nav>
 
         <div className="pie-datos">
           <EstadoApi salud={salud} consultado={consultado} variante="compacto" />

@@ -60,7 +60,6 @@ export default function Publicar() {
     <div className="marco pagina">
       <header className="cabecera-pagina">
         <div>
-          <p className="eyebrow">[Publicar]</p>
           <h1>Publicar un modelo</h1>
           <p className="bajada">
             Subí el ONNX y su contrato. Lo evaluamos contra el conjunto reservado de su tipo de
