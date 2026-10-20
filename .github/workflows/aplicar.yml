@@ -1,9 +1,12 @@
 name: Aplicar
 
-# A mano y nada más. No se dispara con un push: las credenciales del lab vencen cada sesión, el
-# lab cuesta unos USD 7 por día prendido y la regla de uso es destruir al terminar. Prender la
-# infraestructura es una decisión de una persona, no de un merge.
+# Se dispara solo al mergear un PR a main (un push a main) y también a mano. Las credenciales del
+# lab vencen cada sesión (unas 4 horas): antes de mergear hay que cargar las de la sesión actual en
+# los secrets. Si no hay credenciales, el job termina en verde avisándolo; si están vencidas, falla
+# con un mensaje claro. El lab cuesta unos USD 7 por día prendido: «Destruir» sigue siendo a mano.
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       confirmar:
@@ -22,7 +25,7 @@ jobs:
   aplicar:
     name: Terraform Apply
     runs-on: ubuntu-latest
-    if: inputs.confirmar == 'aplicar'
+    if: github.event_name == 'push' || inputs.confirmar == 'aplicar'
 
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -42,16 +45,34 @@ jobs:
           terraform_version: 1.16.5
           terraform_wrapper: false
 
+      - name: ¿Hay credenciales del lab?
+        id: credenciales
+        shell: bash
+        run: |
+          if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SESSION_TOKEN" ]; then
+            echo "hay=false" >> "$GITHUB_OUTPUT"
+            echo 'Sin credenciales del lab en los secrets: no se desplegó.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if ! aws sts get-caller-identity >/dev/null; then
+            echo '::error::Las credenciales del lab están vencidas: cargá las de la sesión actual en los secrets y volvé a correr el job.'
+            exit 1
+          fi
+          echo "hay=true" >> "$GITHUB_OUTPUT"
+
       - name: Bucket del estado
+        if: steps.credenciales.outputs.hay == 'true'
         run: bash terraform/organization/scripts/bootstrap-estado.sh
 
       # Tarda unos quince minutos la primera vez: el constructor arma las imágenes dentro de la
       # cuenta y el apply las espera antes de crear los servicios de ECS. El runner de Ubuntu ya
       # trae el CLI de AWS, que es lo que usan scripts/buckets.sh y esa espera.
       - name: Apply
+        if: steps.credenciales.outputs.hay == 'true'
         run: bash terraform/organization/scripts/tf.sh apply -auto-approve -no-color
 
       - name: Resumen
+        if: steps.credenciales.outputs.hay == 'true'
         shell: bash
         run: |
           {
