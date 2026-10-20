@@ -1,142 +1,258 @@
-# Modelo de demostración disponible desde el primer despliegue
+# Tres modelos disponibles desde el primer despliegue
 
-Estado: implementada con descarga verificada de pesos, según la aclaración del usuario.
+Estado: ampliación a tres modelos implementada y verificada localmente.
 
-Ajuste de alcance autorizado: la fuente no declara una licencia de redistribución. El usuario
-eligió descargar los pesos con revisión y SHA-256 fijos en lugar de incluir el ONNX en Git.
-Se versionan contrato y manifiesto; un clon nuevo requiere internet en su primera preparación.
-Los requisitos de incluir el binario y funcionar sin descargar pesos quedan sustituidos por
-esta decisión. El resto del documento conserva la especificación de referencia.
+Investigación e implementación realizadas el 20 de octubre de 2026. La preparación automática, los tres modelos y la UI están implementados. La infraestructura se validó con proveedores simulados; no se desplegaron recursos reales en AWS.
 
-## Objetivo
+## 1. Objetivo y experiencia del usuario
 
-Incluir en el repositorio el modelo de radiografía de tórax que ya se probó y automatizar su preparación para que una instalación nueva de Ateneo tenga un modelo publicado, evaluado y utilizable. El usuario entra al catálogo, abre su ficha y sube una radiografía para obtener una inferencia, sin descargar, subir ni publicar un modelo por su cuenta.
+Ateneo debe ofrecer tres modelos preentrenados y evaluados para que el usuario elija cuál usar, sin tener que descargar, subir ni publicar uno. Conservar la posibilidad de publicar modelos propios como una opción adicional.
 
-Aplica tanto al entorno local con Docker Compose como al despliegue en AWS Academy con Terraform. Esta especificación no autoriza ejecutar Terraform: esa operación requiere una solicitud explícita posterior.
+Mantener el flujo actual:
 
-## Qué significa «entrenado»
+1. Entrar a la portada o al catálogo `/modelos`.
+2. Elegir una de las tres tarjetas y abrir `/modelos/<id>`.
+3. Subir una imagen en la ficha del modelo elegido.
+4. Consultar el resultado de la inferencia, identificando el modelo utilizado.
 
-El archivo ONNX ya contiene un modelo preentrenado. Ateneo ejecuta inferencias y evalúa sus métricas; no entrena ni modifica sus pesos. La implementación debe automatizar la carga, publicación y evaluación del modelo existente. No debe inventar métricas ni marcarlo como evaluado sin ejecutar el evaluador.
+La selección se realiza al abrir la ficha. No agregar un asistente, un paso obligatorio, una nueva pantalla de consulta ni un selector adicional para repetir esa elección. No ejecutar los tres modelos por cada consulta ni combinar sus predicciones. Cada consulta usa exclusivamente el modelo seleccionado.
 
-## Modelo que se debe incluir
+Aplica a Docker Compose y al código de despliegue para AWS Academy. La implementación no incluye ejecutar un despliegue real de AWS sin una solicitud explícita.
 
-| Campo | Valor |
-| --- | --- |
-| Nombre | `torax-rx-neumonia` |
-| Versión | `1.0.0` |
-| Tipo de estudio | `torax-rx` |
-| Tarea | Clasificación de radiografías de tórax |
-| Clases | `NORMAL`, `PNEUMONIA` |
-| Archivo de origen local | `tmp/modelo/modelo.onnx` |
-| Contrato probado | `tmp/modelo/modelo.json` |
-| Procedencia | `https://huggingface.co/Rhishamah/mediscan-pneumonia` |
-| SHA-256 del ONNX probado | `208b1439d819fede1a4b43e49809d0ca77768ee66184e110c14df1eb838ea67f` |
+## 2. Base que debe conservarse
 
-Preservar el contrato probado: entrada `input`, NCHW RGB float32 de 224 × 224, escala 255, media y desvío de ImageNet; salida `output`, `logit_sigmoide`, clase positiva `PNEUMONIA`, umbral 0.5. La fuente de verdad será el contrato incluido junto al ONNX.
+Actualmente funcionan:
 
-## Situación actual
+- Modelo `torax-rx-neumonia` v1.0.0, descargado con revisión y SHA-256 fijos.
+- Preparación del conjunto `torax-rx/v1`, publicación interna y evaluación automáticas.
+- Caché persistente, validación de artefactos, outbox en PostgreSQL y protección frente a procesadores concurrentes.
+- Estado público `/api/publico/demo`, espera de disponibilidad y recuperación explícita.
+- Catálogo y fichas públicas; permisos existentes para publicar y consultar en AWS.
+- UI que distingue modelos listos de modelos en preparación y presenta publicar como opcional.
 
-- El README describe descargas y publicación manuales.
-- `tools/descargar_modelo.py` descarga el ONNX y genera el contrato; opcionalmente copia ambos al bucket.
-- `tmp/` y los archivos `*.onnx` están ignorados por Git. Los archivos que se usaron en esta PC no aparecen en un clon nuevo.
-- Docker Compose crea los servicios y buckets, pero no carga ni publica el modelo automáticamente.
-- El constructor de AWS, con `datos_demo = true`, carga el modelo y el conjunto en S3, pero deja pendiente pulsar «Publicar».
-- Subir objetos al bucket no alcanza: también debe existir el registro del catálogo y debe encolarse la evaluación mediante el flujo del backend.
-- El estado y los resultados obtenidos manualmente en esta PC no deben convertirse en un volcado de base de datos para distribuir.
+Conservar el modelo que el usuario ya publicó, incluyendo su ID, fechas, métricas y objetos. Los modelos agregados no deben requerir borrar la base ni reiniciar desde cero.
 
-## Archivos versionados
+«Preentrenado» significa que los pesos ya fueron entrenados por su autor. Ateneo prepara, evalúa y ejecuta inferencias: no entrena los modelos ni inventa sus métricas.
 
-Crear `models/torax-rx-neumonia/1.0.0/` con:
+## 3. Modelos seleccionados
 
-- `modelo.onnx`: copia exacta del archivo probado, de unos 16 MB.
-- `modelo.json`: contrato correspondiente.
-- `manifest.json`: nombre, versión, origen, revisión de origen cuando pueda identificarse, tamaño y SHA-256 de los artefactos.
-- `README.md`: procedencia, uso previsto, contrato y condiciones de redistribución verificadas en la fuente.
+Los dos nuevos modelos clasifican las mismas radiografías de tórax que el inicial: `NORMAL` frente a `PNEUMONIA`. Comparten `tipo_estudio = torax-rx` y pueden evaluarse sobre el conjunto reservado existente, sin incorporar otra modalidad ni otro motor.
 
-Versionar el ONNX directamente en Git por su tamaño actual; agregar una excepción acotada en `.gitignore` para ese archivo. No habilitar todos los ONNX ni incluir `tmp/`, credenciales, estados de Terraform o datos de pacientes. Verificar la licencia y conservar las atribuciones aplicables antes de redistribuir el binario; si la fuente no permite determinar el permiso de redistribución, informar el bloqueo y no afirmar que el artefacto quedó distribuido.
+| Identidad interna propuesta | Nombre visible | Archivo de origen | Tamaño del ONNX |
+| --- | --- | --- | --- |
+| `torax-rx-neumonia` v1.0.0 | Mediscan · Neumonía | `mediscan_pneumonia.onnx` | 16.025.329 bytes |
+| `torax-rx-densenet121` v1.0.0 | DenseNet121 · Neumonía | `densenet121.onnx` | 30.310.489 bytes |
+| `torax-rx-efficientnet-b0` v1.0.0 | EfficientNet-B0 · Neumonía | `efficientnet_b0.onnx` | 18.646.118 bytes |
 
-Una instalación nueva debe obtener el modelo desde el repositorio, sin depender de descargar sus pesos desde Hugging Face durante el arranque. No usar Git LFS de forma implícita ni dejar un puntero en lugar del binario. Un cambio de pesos o de contrato incompatible requiere una nueva versión.
+DenseNet121 y EfficientNet-B0 son dos redes con artefactos diferentes publicadas por el mismo autor. Se usan individualmente; no se incorpora el ensemble del autor ni su tercer modelo ConvNeXt-Tiny.
 
-## Inicialización automática
+### 3.1 Modelo inicial: conservar sin cambios
 
-Separar dos responsabilidades para evitar dependencias circulares y compartirlas entre local y AWS:
+- Fuente: [Rhishamah/mediscan-pneumonia](https://huggingface.co/Rhishamah/mediscan-pneumonia).
+- Revisión: `f31fffeac0caa11017df1b0948cc54f73a05033e`.
+- SHA-256: `208b1439d819fede1a4b43e49809d0ca77768ee66184e110c14df1eb838ea67f`.
+- Conservar su `modelo.json` y `manifest.json` existentes, entrada `input` y salida `output`.
+- La fuente no declara una licencia de redistribución. Mantener la decisión del usuario de descargar pesos verificados, sin incluirlos en Git.
 
-1. **Preparar artefactos:** validar hashes, copiar el ONNX y contrato al bucket de modelos y preparar/cargar el conjunto de evaluación.
-2. **Registrar el modelo:** con migraciones aplicadas y artefactos completos, reutilizar `PublicarModelo` para registrarlo y encolar su evaluación. El evaluador y el procesador completan el flujo normal de resultados.
+### 3.2 DenseNet121
 
-El registro debe ejecutarse como operación interna de inicialización, sin simular un usuario, guardar tokens de Cognito, abrir endpoints públicos de administración ni insertar métricas mediante SQL.
+- Fuente: [ZubaerNiloy/pneumonia-ensemble-onnx](https://huggingface.co/ZubaerNiloy/pneumonia-ensemble-onnx).
+- Revisión fijada: `d30e6fe12acc63248e0e669725e2d5944b541df1`.
+- [Descarga fijada de densenet121.onnx](https://huggingface.co/ZubaerNiloy/pneumonia-ensemble-onnx/resolve/d30e6fe12acc63248e0e669725e2d5944b541df1/densenet121.onnx).
+- SHA-256 verificado: `081336d6f50f9254982532511fae8f85dd97c5eb4e3ee75c76ebbd7c8fe52592`.
+- Licencia declarada en la ficha de esa revisión: MIT. Conservar procedencia y atribución.
 
-### Conjunto de evaluación
+### 3.3 EfficientNet-B0
 
-Usar el conjunto de demostración `torax-rx/v1`: 200 casos del split `test` de `hf-vision/chest-xray-pneumonia`, 100 por clase, semilla 42, generado con `tools/preparar_conjunto.py` y cargado con `tools/subir_conjunto.py`.
+- Fuente y revisión: las mismas que DenseNet121.
+- [Descarga fijada de efficientnet_b0.onnx](https://huggingface.co/ZubaerNiloy/pneumonia-ensemble-onnx/resolve/d30e6fe12acc63248e0e669725e2d5944b541df1/efficientnet_b0.onnx).
+- SHA-256 verificado: `09ce0d3d0a1ed9c7eb42b421558f340abde85ae795fbbb20c21fd3c254b24da2`.
+- Licencia declarada en la ficha de esa revisión: MIT. Conservar procedencia y atribución.
 
-La descarga del conjunto puede requerir internet en la primera preparación. Conservarlo en almacenamiento persistente para evitar repetir la descarga y conversión en cada arranque. Registrar procedencia, selección y hash del conjunto preparado en su manifiesto; fijar una revisión de origen cuando el mecanismo de descarga lo permita. No prometer reproducibilidad binaria solo por usar una semilla: el script actual genera nombres UUID aleatorios.
+### 3.4 Fuentes de la verificación
 
-Subir todos los casos y `verdad.jsonl` antes de publicar `manifiesto.json`, que actuará como marca de finalización. Verificar que el manifiesto corresponda a los archivos presentes; su sola existencia no garantiza una carga íntegra. Las etiquetas y casos reservados no se exponen a través del catálogo público.
+La [API del repositorio con metadatos de archivos](https://huggingface.co/api/models/ZubaerNiloy/pneumonia-ensemble-onnx?blobs=true) identifica revisión, tamaños y hashes. Se descargaron los dos candidatos únicamente a una carpeta temporal y se comprobaron sus bytes contra esos hashes.
 
-### Docker Compose
+El [código original de inferencia del autor](https://huggingface.co/spaces/ZubaerNiloy/pneumonia-detection/blob/b916bd6697c07628967c8eb0f12e2c33a18d1b17/index.html), revisión `b916bd6697c07628967c8eb0f12e2c33a18d1b17`, documenta conversión a RGB, resize a 224 × 224, normalización ImageNet y aplicación de sigmoide con umbral 0.5. La [API de ese Space](https://huggingface.co/api/spaces/ZubaerNiloy/pneumonia-detection?blobs=true) confirma que sus dos archivos tienen los mismos hashes que los seleccionados.
 
-- Agregar un servicio de inicialización de artefactos, sin puertos, que arranque por defecto y use la imagen de herramientas/ML con el modelo versionado incluido.
-- Esperar a que MinIO esté sano y los buckets existan. No condicionar el arranque de worker, evaluador y procesador a que la evaluación ya haya terminado.
-- Mantener el conjunto preparado en un volumen o caché persistente; no depender del contenido actual de `tmp/`.
-- Incorporar en el procesador una rutina de registro que espere la disponibilidad de artefactos completos y publique una sola vez. Debe convivir con el consumo de resultados y tener reintentos acotados con espera.
-- El comando habitual `docker compose up -d --build` debe iniciar todo el proceso sin comandos manuales adicionales.
-- Agregar un comando de verificación/espera que termine correctamente solo cuando el modelo esté en `ok`, o falle con un motivo y un límite de tiempo configurable. Documentar que Compose puede devolver antes de que termine la evaluación inicial.
+Se verificaron en un contenedor temporal sin red con `onnx.checker`, ONNX Runtime **1.18.0**, `OnnxMotor`, `Inferidor` y el preprocesamiento actual del proyecto:
 
-### AWS Academy
+| Verificación | DenseNet121 | EfficientNet-B0 |
+| --- | --- | --- |
+| ONNX IR / opset | 8 / 17 | 8 / 17 |
+| Entrada | `input`, float32, `[1, 3, 224, 224]` | `input`, float32, `[1, 3, 224, 224]` |
+| Salida | `logit`, float32, `[1, 1]` | `logit`, float32, `[1, 1]` |
+| Carga y ejecución en CPU | Correctas | Correctas |
+| Prueba preliminar: 4 casos por clase | 6 aciertos de 8 | 5 aciertos de 8 |
 
-- Mantener `datos_demo` como control del proceso completo. Con `true`, preparar artefactos y publicar automáticamente; con `false`, no sembrar ni registrar automáticamente. Desactivarlo no elimina modelos ya existentes.
-- Reutilizar el constructor para copiar el modelo versionado y preparar el conjunto; dejar de descargar sus pesos desde la URL externa.
-- Incluir `models/` en el paquete de despliegue y en el cálculo de hash. El empaquetado actual usa `file()` para leer fuentes de texto: no pasar el ONNX por esa función. Adaptar el empaquetado a archivos binarios preservando una lista explícita de archivos permitidos y excluyendo secretos y estado.
-- Incluir los artefactos en las imágenes que los necesiten, actualizando Dockerfiles y contexto según corresponda.
-- Pasar la configuración de inicialización al procesador y reutilizar la rutina interna de registro, sin llamar a la API con credenciales de un administrador.
-- Mantener al constructor independiente de ECS/RDS para el registro: primero prepara S3; el procesador registra cuando sus dependencias están listas.
-- Exponer claramente errores de preparación y de registro. No considerar «modelo listo» solo porque Terraform terminó o las imágenes ya existen.
+Esta prueba confirma compatibilidad técnica, no calidad clínica ni una accuracy final. No se seleccionaron normalización, umbral u orden de clases para maximizar estos aciertos. La implementación completó también la evaluación real sobre los mismos 200 casos antes de mostrarlos como listos (ver la verificación al final). No copiar a Ateneo las métricas que la web del autor atribuye a su ensemble.
 
-## Idempotencia, concurrencia y recuperación
+## 4. Contratos y artefactos versionados
 
-- Identificar el modelo por `(nombre, version)` y comprobar el hash del artefacto.
-- Si el mismo modelo está en `ok`, conservar su ID, métricas, fechas y objetos. No republicar ni reevaluar al reiniciar.
-- Si está `pendiente` o `en_curso`, dejar continuar la evaluación existente; no ejecutar `PublicarModelo` otra vez sobre esos estados.
-- Proteger la decisión de alta frente a dos procesadores concurrentes mediante bloqueo en PostgreSQL y la unicidad de nombre/versión. No bloquear el consumo de resultados durante toda la evaluación.
-- Si falta algún objeto, reparar la carga desde los artefactos versionados sin sobrescribir una versión distinta bajo la misma identidad. Ante un hash incompatible, fallar explícitamente.
-- Recuperar fallos de encolado y evaluaciones atascadas usando estados persistidos, reintentos limitados y los mecanismos de vencimiento existentes. Un estado `pendiente` sin mensaje no debe quedar detenido para siempre.
-- Si la evaluación termina en error, registrar el motivo y permitir una recuperación controlada; evitar ciclos infinitos de republicación y consumo de recursos.
-- Una inicialización fallida no debe borrar modelos de usuarios ni inutilizar los servicios existentes.
+Mantener el esquema existente: `models/<nombre>/<version>/modelo.json`, `manifest.json` y `README.md`. Versionar contratos y manifiestos, no los pesos. Descargar automáticamente cada ONNX desde su revisión inmutable, validar tamaño y SHA-256 y reutilizar su caché. No usar URLs con `main` para los pesos.
 
-## Comportamiento en la página
+Agregar un registro versionado de modelos, por ejemplo `models/catalogo.json`, que enumere las tres identidades y las rutas de sus manifiestos. Ese registro será la fuente de verdad del conjunto predeterminado, evitando repetir listas en Python, Terraform y React.
 
-- Con el entorno listo, la portada y `/modelos` muestran el modelo real con métricas calculadas; su ficha permite subir una radiografía y consultar.
-- Durante la primera preparación/evaluación, mostrar un mensaje comprensible de preparación automática. Evitar que una instalación en preparación parezca un catálogo vacío que exige publicar manualmente.
-- Refrescar automáticamente el catálogo durante la inicialización hasta obtener el estado final, sin exigir recargar el navegador; detener o espaciar las consultas al terminar.
-- En caso de error, informar que el modelo de demostración no pudo prepararse y ofrecer una indicación útil, sin mostrar datos sensibles.
-- Conservar la publicación de modelos propios y los permisos actuales. El catálogo sigue siendo público; en AWS, consultar un estudio conserva el requisito de autenticación correspondiente.
-- No llamar «entrenamiento» a la carga o evaluación ni mostrar resultados clínicos ficticios.
+Los contratos nuevos tendrán estos valores comunes, confirmados por el código y los grafos:
 
-## Criterios de aceptación y verificación
+```json
+{
+  "version": "1.0.0",
+  "tipo_estudio": "torax-rx",
+  "tarea": "clasificacion",
+  "entrada": {
+    "nombre": "input",
+    "layout": "NCHW",
+    "forma": [1, 3, 224, 224],
+    "dtype": "float32",
+    "espacio_color": "RGB",
+    "redimension": "estirar",
+    "escala": 255,
+    "media": [0.485, 0.456, 0.406],
+    "desvio": [0.229, 0.224, 0.225]
+  },
+  "salida": {
+    "nombre": "logit",
+    "tipo": "logit_sigmoide",
+    "etiquetas": ["NORMAL", "PNEUMONIA"],
+    "positiva": "PNEUMONIA",
+    "umbral": 0.5
+  }
+}
+```
 
-1. En un clon limpio, el ONNX y contrato versionados existen y coinciden con el manifiesto. ONNX Runtime puede cargar el modelo.
-2. En un entorno local aislado, con base y buckets nuevos, un único `docker compose up -d --build` prepara el conjunto, copia el modelo, lo publica y termina su evaluación sin intervención en `/publicar`.
-3. El comando de espera confirma el estado `ok`; `GET /api/publico/modelos` devuelve una sola entrada para `torax-rx-neumonia` versión `1.0.0` con métricas reales.
-4. Al abrir la web durante el arranque se informa la preparación; al terminar aparece el modelo sin recarga manual. Un usuario puede abrir su ficha y realizar una inferencia con una imagen compatible.
-5. Reiniciar o reconstruir el entorno persistente conserva el mismo ID y métricas, sin duplicados, descargas innecesarias ni nuevas evaluaciones.
-6. El modelo que el usuario ya publicó en esta PC se reconoce y conserva; no se borra ni se reemplaza para demostrar un arranque limpio.
-7. Dos inicializaciones simultáneas no crean registros o evaluaciones duplicados. Probar también una carga incompleta y un fallo de encolado con recuperación.
-8. Agregar pruebas dirigidas a la inicialización y su idempotencia. Ejecutar las pruebas existentes afectadas; la validación local no requiere desplegar AWS.
-9. Para AWS, validar Terraform y el contenido binario del paquete construido; documentar la verificación real del Lab como pendiente si no se autorizó ese despliegue.
-10. Actualizar README y documentación de Terraform con el arranque automático, la espera inicial, el mecanismo de recuperación y el carácter opcional de publicar otro modelo.
+Completar `nombre` con la identidad correspondiente y `origen` con el enlace al artefacto fijado. La interpolación de Pillow no es idéntica a la del navegador del autor; conservar el preprocesamiento existente y registrar las métricas que ese pipeline produzca. No cambiar globalmente el motor ni el contrato del modelo inicial para adaptar estos candidatos.
 
-Usar volúmenes y un proyecto Compose separados para probar instalaciones nuevas. No ejecutar `docker compose down -v` sobre el entorno del usuario ni destruir recursos de AWS como parte de estas pruebas.
+El manifiesto debe incluir nombre, versión, URL, revisión, tamaño, SHA-256, licencia declarada y referencia al código de preprocesamiento. Documentar nombres visibles y arquitectura sin usar la arquitectura como sustituto de la identidad interna. Pesos o contratos incompatibles requieren otra versión.
 
-## Alcance de esta entrega documental
+## 5. Generalización de la preparación y publicación
 
-La implementación incluye inicialización de artefactos, registro automático con outbox, estado público, actualización del catálogo, comando de espera, recuperación explícita y pruebas locales. Terraform se valida con proveedores simulados; el despliegue real en AWS sigue pendiente de autorización.
+### 5.1 Preparación de artefactos
 
-### Verificación realizada
+Generalizar `tools/demo_assets.py`, que actualmente tiene una única identidad y rutas constantes:
 
-- 115 pruebas Python aprobadas, incluidas integración con PostgreSQL, dos procesadores concurrentes, recuperación de envíos e integridad de artefactos.
-- Terraform validado y cinco pruebas con proveedores simulados aprobadas. ZIP local comprobado.
-- Instalación aislada desde cero: descarga fijada, preparación de 200 casos, publicación y evaluación automáticas; resultado `ok`, accuracy 0.97. Inferencia real completada.
-- Repetir la preparación y reiniciar conserva ID, fechas y métricas sin reevaluación. El modelo que el usuario publicó manualmente se conservó sin cambios.
-- Entorno habitual actualizado y comando de espera confirmado en `ok`.
-- Revisión visual no realizada por falta de navegador integrado disponible. Despliegue real en AWS no realizado.
+- Recorrer el registro de modelos y procesar cada identidad por separado.
+- Mantener una caché por nombre y versión; evitar colisiones entre archivos llamados `modelo.onnx`.
+- Verificar cada descarga antes de copiarla al bucket. No sobrescribir un artefacto incompatible bajo una versión existente.
+- Crear marcas de preparación y estado por modelo, por ejemplo `demo/<nombre>/<version>/estado.json` y `artefactos.json`. Una marca global no debe afirmar que los tres están listos por haber preparado uno.
+- Conservar las rutas de objetos `modelos/<nombre>/<version>/modelo.onnx` y `modelo.json`.
+- Aislar fallos: si un modelo falla, continuar preparando los otros. Registrar el error específico en logs y un estado público seguro.
+- Reutilizar el conjunto `torax-rx/v1` una sola vez. No descargar, convertir ni cargar 200 imágenes por cada modelo.
+- Verificar casos, etiquetas y hash, publicando el manifiesto del conjunto al final. No generar otra selección de imágenes para favorecer un modelo.
+
+La primera instalación requiere internet. Los arranques siguientes deben reutilizar pesos y conjunto persistidos. No incorporar los casos reservados en el frontend ni publicar sus etiquetas por la API.
+
+### 5.2 Registro interno y outbox
+
+Generalizar `backend/app/demo.py` para procesar las tres identidades:
+
+- Reutilizar `PublicarModelo`; no insertar métricas ni simular tokens de administrador.
+- Conservar unicidad por `(nombre, version)` y emplear esa identidad también como clave de outbox y presupuesto de reintentos. La tabla `demo_inicializacion` ya permite varias claves.
+- Sustituir el único candado por un candado determinista por identidad. No usar `hash()` de Python, que cambia entre procesos.
+- Confirmar la fila y su outbox antes de enviar a SQS; conservar la semántica de entrega al menos una vez y la aplicación idempotente de resultados.
+- Si un modelo está `ok`, conservar ID, fechas y métricas. Si está pendiente o en curso, dejar continuar su evaluación sin republicarlo.
+- Mantener recuperación limitada de envíos fallidos y pendientes sin noticias. Un error en un modelo no debe detener los otros dos.
+- No usar un único booleano `terminado` que detenga el inicializador después del primer modelo completado.
+- Encolar una evaluación independiente por modelo y dejar que el evaluador actual las consuma. No aumentar la concurrencia de Fargate ni las cuotas del Lab para evaluar los tres al mismo tiempo.
+
+Al actualizar una instalación existente, reconocer el modelo inicial y preparar solamente lo que falte. No borrar los objetos o métricas del usuario para migrar las marcas globales anteriores.
+
+### 5.3 Estado, espera y recuperación
+
+Mantener `/api/publico/demo` para el estado de los modelos predeterminados, ampliando su respuesta con:
+
+- `activo`, estado global, cantidad esperada, cantidad lista y cantidad con error.
+- Lista por modelo con nombre, versión, estado y, si ya existe en catálogo, ID.
+- Estado global `ok` solo cuando los tres estén evaluados correctamente; distinguir preparación, disponibilidad parcial y error final.
+
+Los conteos de los modelos predeterminados no incluyen modelos adicionales publicados por usuarios. El catálogo general sigue mostrándolos a todos.
+
+Actualizar todos los consumidores juntos: frontend, comando de espera, documentación y pruebas. No exponer URLs firmadas, credenciales, excepciones internas ni verdad del conjunto reservado.
+
+`tools/esperar_modelo.py` debe esperar los tres por defecto, admitir seleccionar una identidad y terminar con error o timeout cuando corresponda. Con disponibilidad parcial, la web sigue permitiendo usar los modelos listos aunque el comando que espera los tres todavía no termine correctamente.
+
+`python -m app.reintentar_demo` debe permitir indicar nombre y versión, preservar los modelos sanos y limitar la recuperación al elegido. No reiniciar o reevaluar los otros para recuperar uno.
+
+### 5.4 Docker y AWS
+
+- `docker compose up -d --build` debe preparar y publicar los tres automáticamente, sin pasos manuales en `/publicar`.
+- Conservar los volúmenes y servicios existentes. La ampliación no agrega tres backends ni tres workers.
+- Actualizar el constructor de AWS para que el mismo preparador recorra el registro.
+- Conservar `datos_demo` / `DATOS_DEMO` como control del conjunto predeterminado. Desactivarlo no borra modelos existentes ni impide publicar otros.
+- Incluir los nuevos contratos, manifiestos y registro en el hash y ZIP de despliegue. Mantener el empaquetado que copia bytes mediante lista explícita y excluye secretos/estado.
+- Los ~49 MB adicionales de pesos se descargan en preparación, no se agregan a Git ni al bundle del navegador.
+- Mantener permisos, tamaños y escalado actuales salvo que una medición demuestre un problema. Si hay que ajustar memoria o caché para alternar modelos, documentar el motivo.
+- Terraform puede terminar antes de que estén evaluados los tres; documentar la espera. Validar Terraform con proveedores simulados sin desplegar recursos reales.
+
+## 6. UI: tres opciones, mismo recorrido
+
+### Portada
+
+- Cuando termine la preparación, mostrar las tres tarjetas predeterminadas, con nombres distinguibles y enlaces a sus fichas.
+- Evitar que la selección actual de los tres modelos de mayor accuracy oculte alguno de los predeterminados cuando un usuario publique un cuarto. Reservar la sección principal para los modelos incluidos, sin ocultar los adicionales del catálogo.
+- Indicar «3 modelos listos para usar» solo cuando los tres estén realmente en `ok`; durante la preparación mostrar cantidades reales, por ejemplo «2 de 3 modelos iniciales listos».
+- Mantener «Elegí un modelo → Subí tu estudio → Consultá el resultado» y «Publicar uno propio» como acción opcional.
+
+### Catálogo `/modelos`
+
+- Mostrar tres tarjetas diferenciadas: Mediscan, DenseNet121 y EfficientNet-B0, cada una con nombre, versión, tipo de estudio, estado y métricas propias.
+- Conservar búsqueda, filtros, ordenamiento y paginación. Los modelos del usuario son opciones adicionales: no limitar el catálogo a tres elementos.
+- Una tarjeta abre la ficha del modelo que representa. Se puede hacer más explícito el texto de la acción, por ejemplo «Usar este modelo», preservando navegación con teclado y móvil.
+- No etiquetar como listo un modelo cuya evaluación esté pendiente o fallida. Si uno falla, los otros siguen disponibles y el mensaje explica qué opción no pudo prepararse.
+- Mantener las métricas comparables sobre el mismo conjunto. La etiqueta «Mejor del tipo» debe derivarse de las métricas reales del catálogo, sin favorecimientos manuales.
+
+### Ficha e inferencia
+
+- Identificar claramente nombre y versión del modelo elegido junto al área de consulta.
+- Reutilizar el formulario, subida a S3, encolado, polling y presentación de resultados existentes.
+- Enviar el `modelo_id` de esa ficha, no el del modelo inicial fijado en una constante.
+- Mostrar el nombre del modelo también al presentar el resultado; cambiar de ficha no debe conservar un resultado atribuible al modelo anterior.
+- No agregar comparación simultánea, votación, ensemble ni selección automática por accuracy.
+
+### Publicación propia
+
+- Mantener el formulario ONNX + contrato y sus permisos actuales.
+- Aclarar que ya hay modelos disponibles y publicar uno propio es opcional, con acceso al catálogo.
+- Generalizar los mensajes de `EstadoDemo`, `ModelosListos` y los conteos para contemplar preparación parcial, tres modelos iniciales y modelos de usuarios.
+- Respetar los cambios visuales previos: sin títulos entre corchetes y sin reintroducir los enlaces eliminados del footer.
+
+## 7. Pruebas y criterios de aceptación
+
+1. Los manifiestos de los candidatos coinciden con revisión, tamaño y SHA-256 investigados. Cargan con ONNX Runtime 1.18 y los contratos específicos correctos.
+2. En una instalación local aislada y limpia, un único arranque prepara el conjunto una vez y registra exactamente una entrada por cada modelo predeterminado.
+3. Los tres completan una evaluación real sobre el mismo manifiesto de 200 casos. La UI y la API muestran sus métricas individuales; no se exige igualar métricas de otro entorno ni se inventan valores.
+4. El comando de espera global termina correctamente solo cuando los tres están listos. Su opción individual verifica únicamente el modelo indicado.
+5. En la instalación actual, la ampliación agrega dos entradas y conserva el ID, las fechas y las métricas del inicial. Se preservan los modelos de usuarios.
+6. Reiniciar o reconstruir no duplica registros, descargas ni evaluaciones. Dos procesadores concurrentes no publican la misma identidad dos veces.
+7. Simular un hash inválido, una descarga interrumpida, un envío fallido y una evaluación fallida en uno de los modelos: los otros continúan y la disponibilidad parcial se refleja correctamente.
+8. La recuperación individual modifica solo el modelo elegido. Las cachés separan artefactos y contratos de las tres identidades.
+9. La portada muestra los tres predeterminados incluso si se publica un cuarto modelo con mayor accuracy. El catálogo permite acceder también a ese cuarto y mantiene sus filtros.
+10. Probar el recorrido de una inferencia con cada modelo; el trabajo debe referenciar el ID seleccionado y producir probabilidades válidas para sus clases.
+11. Comprobar estados iniciales, parciales, listos y fallidos; actualización automática; navegación con teclado; distribución móvil; y conservación de la publicación opcional.
+12. Actualizar README, arquitectura y documentación de Terraform. Ejecutar las pruebas afectadas y las simuladas de infraestructura; dejar expresamente pendiente la prueba real en AWS si no se autorizó.
+
+Usar proyecto Compose, puertos y volúmenes separados para las pruebas desde cero. No ejecutar `down -v` sobre el entorno del usuario ni destruir recursos AWS.
+
+## 8. Fuera de alcance de esta ampliación
+
+No entrenar modelos, no cambiar el objetivo clínico, no agregar otro dataset/modalidad, no incorporar GPU ni servidores de inferencia externos. No reemplazar el modelo inicial ni deshabilitar la publicación propia. No implementar inferencia en el navegador, aunque ese sea el mecanismo del Space usado como fuente de preprocesamiento.
+
+Las descargas temporales y pruebas de compatibilidad realizadas para esta investigación no son una instalación en Ateneo. La implementación posterior usa descargas verificadas en los entornos Docker, sin incorporar los pesos en Git.
+
+## 9. Verificación de la implementación
+
+- 125 pruebas Python aprobadas, con PostgreSQL aislado: concurrencia, estados parciales,
+  recuperación individual, descargas interrumpidas e integridad de manifiestos y artefactos.
+- Dos pruebas de selección de la UI aprobadas: un cuarto modelo con mayor accuracy no
+  desplaza los incluidos y no se confunden versiones durante una preparación parcial.
+- Compilación TypeScript/Vite aprobada. Terraform validado y sus cinco pruebas simuladas aprobadas.
+- Instalación limpia con un único arranque: tres registros, un conjunto de 200 casos y tres
+  evaluaciones independientes. Accuracy medida: Mediscan 0.97, DenseNet121 0.665, EfficientNet-B0 0.70.
+  Estos valores son de la demostración local; no son garantías clínicas ni umbrales de aceptación.
+- Inferencia completa verificada con cada uno de los tres IDs, probabilidades válidas y ficha correcta.
+- Reinicio y repetición de preparación conservan IDs, fechas y métricas sin reevaluar.
+- Actualización del entorno habitual: se agregaron dos modelos y se conservó el inicial
+  `95dc47fb-bc03-42d1-9034-46eb8f51b5df` con sus fechas y métricas originales.
+- Comandos de espera global e individual verificados. El entorno del usuario queda funcionando.
+- Revisión visual y navegación manual en móvil/teclado pendientes: no hay navegador integrado
+  disponible. Despliegue real en AWS pendiente de autorización.

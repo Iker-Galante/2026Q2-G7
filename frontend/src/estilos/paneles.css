@@ -228,6 +228,7 @@
   padding-top: 14px;
   border-top: 1px solid var(--borde);
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -237,11 +238,12 @@
 }
 
 .tm-ir {
-  display: inline-grid;
-  place-items: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 6px 10px;
+  border-radius: 999px;
   border: 1px solid var(--borde-fuerte);
   color: var(--tinta);
   flex: none;

@@ -6,6 +6,7 @@ import { Enlace } from "../enrutador";
 import { useModelos } from "../hooks/useModelos";
 import { porcentaje } from "../utilidades/formato";
 import { lideres } from "../utilidades/metricas";
+import { modelosIniciales } from "../utilidades/modelos";
 
 const PASOS = [
   {
@@ -45,7 +46,8 @@ export default function Inicio() {
   const mejor = evaluados.reduce<number | null>((max, m) => Math.max(max ?? 0, m.accuracy ?? 0), null);
   const tipos = new Set(publicados.map((m) => m.tipo_estudio)).size;
   const mejores = useMemo(() => lideres(publicados), [publicados]);
-  const destacados = [...evaluados].sort((a, b) => (b.accuracy ?? 0) - (a.accuracy ?? 0)).slice(0, 3);
+  // El registro del servidor define cuáles se incluyen, aunque otro tenga mayor accuracy.
+  const destacados = modelosIniciales(publicados, demo?.modelos);
 
   return (
     <div className="inicio">
@@ -68,7 +70,9 @@ export default function Inicio() {
             </p>
             {evaluados.length > 0 && (
               <p className="vidrio-disponibilidad">
-                {evaluados.length} {evaluados.length === 1 ? "modelo evaluado disponible" : "modelos evaluados disponibles"}
+                {demo?.activo && demo.listos < demo.esperados
+                  ? `${demo.listos} de ${demo.esperados} modelos iniciales listos`
+                  : `${evaluados.length} ${evaluados.length === 1 ? "modelo evaluado disponible" : "modelos evaluados disponibles"}`}
               </p>
             )}
             <div className="acciones">

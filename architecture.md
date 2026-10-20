@@ -418,3 +418,28 @@ cambios, el plan sale vacío.
 | Historial de evaluaciones | Tabla `evaluacion`; la fila del modelo apunta a la vigente | API pública, UI |
 | DICOM | Un `DecodificadorImagen` más | Preprocesamiento, motor, métricas |
 | Segmentación | Un posprocesador y un calculador de métricas por `tarea` | Motor, worker, evaluador |
+
+## Modelos iniciales y selección en la web
+
+`models/catalogo.json` define los tres modelos incluidos: Mediscan, DenseNet121 y
+EfficientNet-B0. Todos clasifican `torax-rx` en NORMAL/PNEUMONIA, pero cada uno tiene
+identidad, contrato, hash, caché, marca de preparación y evaluación independientes.
+`tools/demo_assets.py` verifica los pesos y prepara un único conjunto reservado compartido.
+El procesador recorre el registro, usa candados PostgreSQL deterministas por identidad y
+una outbox transaccional antes de enviar a SQS. Un fallo no interrumpe los demás modelos.
+
+`GET /api/publico/demo` devuelve el registro visible con estados y conteos de preparación;
+no incluye secretos ni casos reservados. La API agrega `nombre_visible` y `predeterminado`
+a los modelos del catálogo sin cambiar sus IDs. La portada conserva los modelos incluidos
+aunque un usuario publique otro con mayor accuracy; el catálogo permite elegir también
+modelos de usuarios. Las métricas de todas las tarjetas son las calculadas por el evaluador.
+
+La selección sigue siendo catálogo → ficha `/modelos/<id>` → imagen → trabajo de inferencia.
+La ficha y el resultado identifican el modelo. Cada trabajo contiene el ID seleccionado y
+solo ejecuta ese modelo. El worker conserva su caché LRU existente de cuatro sesiones; no
+se agregan workers por modelo, GPU, inferencia en navegador ni votación entre modelos.
+
+La recuperación `python -m app.reintentar_demo --nombre <nombre> --version <version>`
+limita sus cambios a una identidad. El comando `tools/esperar_modelo.py` espera todos por
+defecto y acepta los mismos argumentos para esperar uno. Los reinicios no republican
+modelos evaluados ni reemplazan los que ya existían antes de ampliar el registro.

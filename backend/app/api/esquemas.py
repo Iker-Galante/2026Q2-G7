@@ -86,15 +86,21 @@ class ModeloRespuesta(BaseModel):
     error: str | None
     creado: datetime
     publicado: datetime
+    nombre_visible: str | None = None
+    predeterminado: bool = False
 
     @staticmethod
     def desde(m: Modelo) -> "ModeloRespuesta":
+        from tools.demo_assets import catalogo
+        inicial = next((md for md in catalogo() if (md.nombre, md.version) == (m.nombre, m.version)), None)
         return ModeloRespuesta(
             id=m.id, nombre=m.nombre, version=m.version, tipo_estudio=m.tipo_estudio, tarea=m.tarea,
             etiquetas=m.etiquetas, estado_evaluacion=m.estado_evaluacion, accuracy=m.accuracy,
             metricas=m.metricas, conjunto=m.conjunto, conjunto_version=m.conjunto_version,
             manifiesto=m.manifiesto, evaluador_id=m.evaluador_id, evaluado_en=m.evaluado_en,
             error=m.error, creado=m.creado, publicado=m.publicado,
+            nombre_visible=inicial.nombre_visible if inicial else None,
+            predeterminado=inicial is not None,
         )
 
 

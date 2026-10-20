@@ -13,7 +13,7 @@ export default function FichaModelo({ id }: { id: string }) {
   const { modelo, cargando, noExiste, error } = useModelo(id);
 
   useEffect(() => {
-    if (modelo) document.title = `${modelo.nombre} v${modelo.version} · Ateneo`;
+    if (modelo) document.title = `${modelo.nombre_visible ?? modelo.nombre} v${modelo.version} · Ateneo`;
   }, [modelo]);
 
   const volver = (
@@ -59,7 +59,7 @@ export default function FichaModelo({ id }: { id: string }) {
             <EstadoModelo estado={modelo.estado_evaluacion} />
           </div>
           <h1>
-            {modelo.nombre} <span className="version">v{modelo.version}</span>
+            {modelo.nombre_visible ?? modelo.nombre} <span className="version">v{modelo.version}</span>
           </h1>
           <p className="bajada">
             {modelo.tarea} · {modelo.etiquetas.join(", ")}

@@ -36,34 +36,44 @@ tres colas, con sus colas de fallidos), y cada servicio corre en su contenedor. 
 login: la api sirve el sitio en `/` y todos son anónimos.
 
 ```bash
-docker compose up -d --build            # db, minio, sqs, migraciones, api, procesador, worker, evaluador
+docker compose up -d --build            # db, minio, sqs, demo-init, migraciones, api, procesador, worker, evaluador
 ```
 
 **El sitio se compila adentro de la imagen del backend** (`docker/Dockerfile.backend` tiene una
 etapa de node), así que después de tocar `frontend/` o `backend/` hay que reconstruir:
 `docker compose up -d --build api procesador`.
 
-Abrí <http://localhost:8080>. La primera vez se descarga el modelo preentrenado
-`torax-rx-neumonia` v1.0.0 con revisión y SHA-256 fijos, se prepara el conjunto reservado
-(200 casos) y se publica y evalúa automáticamente. **No necesitás subir ni publicar un modelo.**
-La web muestra el progreso de preparación y actualiza el catálogo al terminar. La primera
-preparación necesita internet y puede tardar varios minutos; `up -d` no espera la evaluación.
+Abrí <http://localhost:8080>. La primera vez se descargan y verifican los tres modelos
+preentrenados del [registro](models/catalogo.json), todos v1.0.0:
 
-Para esperar hasta que esté realmente listo:
+- **Mediscan · Neumonía** (`torax-rx-neumonia`).
+- **DenseNet121 · Neumonía** (`torax-rx-densenet121`).
+- **EfficientNet-B0 · Neumonía** (`torax-rx-efficientnet-b0`).
+
+Se prepara un único conjunto reservado de 200 casos y cada modelo se publica y evalúa
+independientemente sobre ese mismo conjunto. **No necesitás subir ni publicar un modelo.**
+La web muestra cuántos están listos y actualiza el catálogo; podés usar los que ya terminaron
+mientras se preparan los otros. La primera preparación requiere internet y tarda varios minutos.
+`up -d` no espera la evaluación.
 
 ```bash
+# Esperar los tres:
 docker compose run --rm herramientas python tools/esperar_modelo.py --timeout 1800
+# O esperar uno en particular:
+docker compose run --rm herramientas python tools/esperar_modelo.py --nombre torax-rx-densenet121 --version 1.0.0
 ```
 
-Entrá en **Modelos**, abrí la ficha y subí una radiografía para consultar. El ONNX ya está
-preentrenado: Ateneo calcula métricas y ejecuta inferencias, no entrena sus pesos.
-Se conserva el ID y la evaluación de un modelo ya publicado al reiniciar. El modelo, el
-conjunto y su caché persisten en volúmenes. La especificación está en [models_specs.md](models_specs.md).
+El flujo se mantiene: **Modelos → ficha del modelo elegido → subir una radiografía → resultado**.
+Cada consulta ejecuta solo el modelo elegido; no hay ensemble. El resultado identifica nombre
+y versión. Ateneo evalúa y ejecuta inferencias, no entrena los pesos.
 
-Los pesos no se redistribuyen en Git porque la fuente no declara una licencia: se incluyen
-[contrato y manifiesto](models/torax-rx-neumonia/1.0.0/README.md), y la inicialización descarga
-los pesos verificados. Se puede desactivar el proceso con `DATOS_DEMO=false docker compose up -d`;
-eso no borra el modelo existente.
+Reiniciar conserva IDs y métricas de los modelos ya evaluados. Los pesos se descargan por
+revisión inmutable y SHA-256 y persisten en S3/MinIO y caché por identidad. Se versionan
+contratos y manifiestos, no los pesos: el original no declara licencia y los dos nuevos
+declaran MIT en su fuente. Ver [models_specs.md](models_specs.md) y los README de cada modelo.
+
+Se puede desactivar la preparación con `DATOS_DEMO=false docker compose up -d`; no borra
+modelos existentes ni impide publicar otros.
 
 ### Publicar otros modelos (opcional)
 
@@ -86,14 +96,18 @@ docker compose logs --tail=100 demo-init procesador evaluador
 # Reintentar descarga/carga tras corregir el problema (la caché se conserva):
 docker compose run --rm demo-init
 # Si falló la evaluación o se agotaron los envíos, reintentar explícitamente:
-docker compose exec procesador python -m app.reintentar_demo
+docker compose exec procesador python -m app.reintentar_demo --nombre torax-rx-densenet121 --version 1.0.0
 docker compose restart procesador
 docker compose run --rm herramientas python tools/esperar_modelo.py --timeout 1800
 ```
 
-La recuperación conserva el ID y rechaza reintentar una demo que ya esté lista o en curso.
+La recuperación actúa solo sobre la identidad indicada, conserva su ID y rechaza reintentar
+un modelo que ya esté listo o en curso. Los otros modelos no se republican.
 No hace falta borrar volúmenes ni modelos. `GET /api/publico/demo` informa solo el estado,
-sin credenciales ni etiquetas del conjunto reservado.
+sin credenciales ni etiquetas del conjunto reservado. Informa estado global, cantidades
+esperadas/listas/con error/pendientes y una lista de estados e IDs por modelo inicial.
+Un estado parcial permite seguir usando los modelos listos; no cuenta modelos de usuarios
+como parte de los tres iniciales.
 
 Útiles:
 

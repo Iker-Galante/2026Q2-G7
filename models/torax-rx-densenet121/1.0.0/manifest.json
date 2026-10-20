@@ -1,0 +1,19 @@
+{
+  "nombre": "torax-rx-densenet121",
+  "version": "1.0.0",
+  "revision": "d30e6fe12acc63248e0e669725e2d5944b541df1",
+  "origen": "https://huggingface.co/ZubaerNiloy/pneumonia-ensemble-onnx",
+  "licencia": "MIT (declarada por el autor)",
+  "preprocesamiento": "https://huggingface.co/spaces/ZubaerNiloy/pneumonia-detection/blob/b916bd6697c07628967c8eb0f12e2c33a18d1b17/index.html",
+  "archivos": {
+    "modelo.onnx": {
+      "url": "https://huggingface.co/ZubaerNiloy/pneumonia-ensemble-onnx/resolve/d30e6fe12acc63248e0e669725e2d5944b541df1/densenet121.onnx",
+      "sha256": "081336d6f50f9254982532511fae8f85dd97c5eb4e3ee75c76ebbd7c8fe52592",
+      "bytes": 30310489
+    },
+    "modelo.json": {
+      "sha256": "21bd70cae617bb0f932b9864c91814489e4006e14653350c450e88deddb4273b",
+      "bytes": 782
+    }
+  }
+}
