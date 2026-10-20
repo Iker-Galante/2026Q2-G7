@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { Flecha } from "../components/Navegacion";
 import TarjetaModelo from "../components/TarjetaModelo";
+import EstadoDemo from "../components/EstadoDemo";
 import { Enlace } from "../enrutador";
 import { useModelos } from "../hooks/useModelos";
 import { porcentaje } from "../utilidades/formato";
@@ -8,16 +9,16 @@ import { lideres } from "../utilidades/metricas";
 
 const PASOS = [
   {
-    titulo: "Publicá",
-    texto: "Subí el modelo ONNX y su contrato: entradas, etiquetas y umbral.",
+    titulo: "Elegí un modelo",
+    texto: "Explorá los modelos disponibles y compará sus métricas de evaluación. No necesitás subir uno propio.",
   },
   {
-    titulo: "Evaluación a ciegas",
-    texto: "Se mide en una red aislada contra casos reservados que nadie ve.",
+    titulo: "Subí tu estudio",
+    texto: "Abrí la ficha del modelo y seleccioná una imagen compatible con su tipo de estudio.",
   },
   {
-    titulo: "Analizá",
-    texto: "El equipo clínico elige por la medida y analiza sus estudios.",
+    titulo: "Consultá el resultado",
+    texto: "Recibí la predicción y consultá las métricas con las que se evaluó el modelo.",
   },
 ];
 
@@ -38,7 +39,7 @@ function FondoPortada() {
 }
 
 export default function Inicio() {
-  const { publicados, error } = useModelos();
+  const { publicados, error, demo } = useModelos();
 
   const evaluados = publicados.filter((m) => m.estado_evaluacion === "ok" && m.accuracy !== null);
   const mejor = evaluados.reduce<number | null>((max, m) => Math.max(max ?? 0, m.accuracy ?? 0), null);
@@ -59,13 +60,23 @@ export default function Inicio() {
 
         <div className="portada-vidrio">
           <div className="vidrio-texto">
-            <p className="vidrio-lema">Modelos de IA clínica, evaluados contra casos que nadie vio.</p>
+            <p className="vidrio-lema">
+              {evaluados.length > 0 ? "Modelos de IA clínica listos para usar." : "IA clínica para analizar tus estudios."}
+            </p>
+            <p className="vidrio-descripcion">
+              Elegí un modelo del catálogo y subí una imagen. No necesitás publicar uno propio para empezar.
+            </p>
+            {evaluados.length > 0 && (
+              <p className="vidrio-disponibilidad">
+                {evaluados.length} {evaluados.length === 1 ? "modelo evaluado disponible" : "modelos evaluados disponibles"}
+              </p>
+            )}
             <div className="acciones">
               <Enlace a="/modelos" className="pildora pildora-clara">
-                Explorar modelos <Flecha />
+                Elegir un modelo <Flecha />
               </Enlace>
               <Enlace a="/publicar" className="pildora pildora-vidrio">
-                Publicar un modelo
+                Publicar uno propio
               </Enlace>
             </div>
           </div>
@@ -77,7 +88,7 @@ export default function Inicio() {
                 <dd>{publicados.length}</dd>
               </div>
               <div>
-                <dt>Evaluados</dt>
+                <dt>Listos para usar</dt>
                 <dd>{evaluados.length}</dd>
               </div>
               <div>
@@ -96,12 +107,13 @@ export default function Inicio() {
       <section className="marco seccion">
         <header className="cabecera-seccion">
           <h2 className="titular">
-            IA clínica medida
+            Elegí un modelo
             <br />
-            con la misma vara
+            y analizá tu estudio
           </h2>
         </header>
 
+        <EstadoDemo demo={demo} />
         {destacados.length > 0 ? (
           <div className="grilla-modelos">
             {destacados.map((m) => (
@@ -110,7 +122,7 @@ export default function Inicio() {
           </div>
         ) : (
           <div className="vacio">
-            <p>Todavía no hay modelos evaluados.</p>
+            {(!demo?.activo || demo.estado === "ok") && <p>Todavía no hay modelos evaluados.</p>}
           </div>
         )}
 
@@ -140,11 +152,11 @@ export default function Inicio() {
       <section className="marco seccion">
         <div className="banda">
           <div>
-            <h2>¿Tenés un modelo?</h2>
-            <p>Publicalo y obtené una medida independiente, comparable con el resto del catálogo.</p>
+            <h2>¿Querés sumar tu propio modelo?</h2>
+            <p>También podés publicarlo para que lo evaluemos y sumarlo al catálogo. Es opcional: podés usar los modelos disponibles sin publicar uno.</p>
           </div>
           <Enlace a="/publicar" className="pildora pildora-clara">
-            Publicar un modelo <Flecha />
+            Publicar uno propio <Flecha />
           </Enlace>
         </div>
       </section>

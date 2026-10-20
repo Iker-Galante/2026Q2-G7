@@ -36,7 +36,7 @@ locals {
   raiz = abspath("${path.module}/../..")
 
   # Lo que leen los Dockerfiles, y nada más (ni tmp/, ni node_modules, ni el estado).
-  carpetas_codigo = ["backend/app", "worker", "evaluador", "ateneo_ml", "migraciones", "tools", "docker", "frontend/src"]
+  carpetas_codigo = ["backend/app", "worker", "evaluador", "ateneo_ml", "migraciones", "tools", "docker", "frontend/src", "models"]
   codigo = sort([
     for f in distinct(concat(
       flatten([for c in local.carpetas_codigo : [for f in fileset("${local.raiz}/${c}", "**") : "${c}/${f}"]]),
@@ -54,17 +54,20 @@ locals {
   }
 }
 
+data "external" "paquete" {
+  program = ["python3", "${local.raiz}/tools/empaquetar_codigo.py"]
+  query = {
+    raiz     = local.raiz
+    archivos = jsonencode(local.codigo)
+    destino  = abspath("${path.module}/.build/source-${local.version_codigo}")
+  }
+}
+
 data "archive_file" "codigo" {
   type        = "zip"
   output_path = "${path.module}/.build/codigo-${local.version_codigo}.zip"
 
-  dynamic "source" {
-    for_each = local.codigo
-    content {
-      content  = file("${local.raiz}/${source.value}")
-      filename = source.value
-    }
-  }
+  source_dir = data.external.paquete.result.directorio
 }
 
 resource "aws_s3_object" "codigo" {

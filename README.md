@@ -43,23 +43,57 @@ docker compose up -d --build            # db, minio, sqs, migraciones, api, proc
 etapa de node), así que después de tocar `frontend/` o `backend/` hay que reconstruir:
 `docker compose up -d --build api procesador`.
 
-Abrí <http://localhost:8080>. Todavía no hay modelos ni conjunto reservado: los dos comandos de
-acá abajo bajan el ONNX y el conjunto; el modelo se sube después desde la propia pantalla.
+Abrí <http://localhost:8080>. La primera vez se descarga el modelo preentrenado
+`torax-rx-neumonia` v1.0.0 con revisión y SHA-256 fijos, se prepara el conjunto reservado
+(200 casos) y se publica y evalúa automáticamente. **No necesitás subir ni publicar un modelo.**
+La web muestra el progreso de preparación y actualiza el catálogo al terminar. La primera
+preparación necesita internet y puede tardar varios minutos; `up -d` no espera la evaluación.
+
+Para esperar hasta que esté realmente listo:
 
 ```bash
-# 1. el modelo ONNX (16 MB) y su modelo.json → quedan en ./tmp/modelo, para subirlos desde la web
-docker compose run --rm herramientas python tools/descargar_modelo.py --carpeta /salida/modelo --solo-descargar
-
-# 2. el conjunto reservado (200 casos), bajado de Hugging Face: no hace falta cuenta de Kaggle
-docker compose run --rm herramientas python tools/preparar_conjunto.py \
-  --hf hf-vision/chest-xray-pneumonia --split test --por-clase 100 --salida /salida/torax-rx/v1
-docker compose run --rm herramientas python tools/subir_conjunto.py /salida/torax-rx/v1
+docker compose run --rm herramientas python tools/esperar_modelo.py --timeout 1800
 ```
 
-Después, en `/publicar`: arrastrá `tmp/modelo/modelo.onnx` y `tmp/modelo/modelo.json` a la zona de
-subida y apretá **Subir y publicar** (el evaluador tarda 2-4 min en CPU con 200 casos). Y en
-`/consulta`: **Consultar** con cualquiera de las radiografías que quedaron en
-`tmp/torax-rx/v1/casos/`.
+Entrá en **Modelos**, abrí la ficha y subí una radiografía para consultar. El ONNX ya está
+preentrenado: Ateneo calcula métricas y ejecuta inferencias, no entrena sus pesos.
+Se conserva el ID y la evaluación de un modelo ya publicado al reiniciar. El modelo, el
+conjunto y su caché persisten en volúmenes. La especificación está en [models_specs.md](models_specs.md).
+
+Los pesos no se redistribuyen en Git porque la fuente no declara una licencia: se incluyen
+[contrato y manifiesto](models/torax-rx-neumonia/1.0.0/README.md), y la inicialización descarga
+los pesos verificados. Se puede desactivar el proceso con `DATOS_DEMO=false docker compose up -d`;
+eso no borra el modelo existente.
+
+### Publicar otros modelos (opcional)
+
+La página `/publicar` sigue aceptando ONNX y contrato. Si querés probar la subida del mismo
+modelo en otro entorno, podés obtener los dos archivos así:
+
+```bash
+docker compose run --rm herramientas python tools/descargar_modelo.py --carpeta /salida/modelo --solo-descargar
+```
+
+Arrastrá `tmp/modelo/modelo.onnx` y `tmp/modelo/modelo.json` y usá **Subir y publicar**.
+Una versión existente no se sobrescribe: en el entorno con demo ya estará publicada.
+Podés usar radiografías propias de prueba o preparar una carpeta local de ejemplos con
+`tools/preparar_conjunto.py` como describe su ayuda. Los casos reservados no se sirven por la API pública.
+
+### Recuperación
+
+```bash
+docker compose logs --tail=100 demo-init procesador evaluador
+# Reintentar descarga/carga tras corregir el problema (la caché se conserva):
+docker compose run --rm demo-init
+# Si falló la evaluación o se agotaron los envíos, reintentar explícitamente:
+docker compose exec procesador python -m app.reintentar_demo
+docker compose restart procesador
+docker compose run --rm herramientas python tools/esperar_modelo.py --timeout 1800
+```
+
+La recuperación conserva el ID y rechaza reintentar una demo que ya esté lista o en curso.
+No hace falta borrar volúmenes ni modelos. `GET /api/publico/demo` informa solo el estado,
+sin credenciales ni etiquetas del conjunto reservado.
 
 Útiles:
 

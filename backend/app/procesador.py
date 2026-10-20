@@ -24,7 +24,7 @@ from .aplicacion.casos_uso.inferencias import ReenviarPendientes
 from .aplicacion.casos_uso.modelos import VencerEvaluaciones
 from .aplicacion.casos_uso.resultados import AplicarResultado, MensajeInvalido
 from .config import Settings
-from .infraestructura.aws import cliente_sqs
+from .infraestructura.aws import cliente_s3, cliente_sqs
 from .infraestructura.postgres import migraciones
 from .infraestructura.postgres.conexion import crear_pool
 from .infraestructura.postgres.repositorios import (
@@ -97,6 +97,10 @@ def main() -> None:
                            settings.reenvio_minutos, settings.vencimiento_en_curso_minutos),
         VencerEvaluaciones(modelos, settings.vencimiento_evaluacion_minutos),
     ]
+    if settings.datos_demo:
+        from .demo import InicializarDemo
+        settings.exigir("cola_evaluaciones_url")
+        tareas.append(InicializarDemo(pool, cliente_s3(settings.aws_region), sqs, settings))
     reenviador = threading.Thread(target=reenviar_cada, args=(settings.intervalo_reenvio_s, tareas, detener),
                                   name="reenviador", daemon=True)
     reenviador.start()

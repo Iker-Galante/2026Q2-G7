@@ -43,6 +43,8 @@ class Settings(BaseSettings):
 
     prefijo_modelos: str = "modelos/"
     prefijo_estudios: str = "estudios/"
+    datos_demo: bool = False
+    demo_reenvio_segundos: int = 900
 
     @model_validator(mode="after")
     def _cognito_completo(self) -> "Settings":

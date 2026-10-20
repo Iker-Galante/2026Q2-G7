@@ -40,7 +40,7 @@ export default function TarjetaModelo({ modelo: m, mejor = false }: Props) {
         <div className="tm-pie">
           <span>
             {evaluado
-              ? `${casos ?? "—"} casos · ${m.conjunto ?? ""} ${m.conjunto_version ?? ""}`
+              ? `Listo para usar · ${casos ?? "—"} casos evaluados`
               : m.estado_evaluacion === "error"
                 ? "La evaluación no terminó"
                 : "Esperando la evaluación"}

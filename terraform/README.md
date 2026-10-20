@@ -66,9 +66,10 @@ Después:
 
 1. Abrí `url`. El admin entra con la contraseña temporal que le mandó Cognito; cualquiera puede
    crear una cuenta de institución o de publicador desde «Ingresar».
-2. En `/publicar`, «En el bucket» ya tiene el modelo de demostración: **Publicar**. El evaluador
-   arranca solo (de 0 a 1 tarea; uno o dos minutos la primera vez) y lo mide contra el conjunto.
-3. En `/consulta`, elegí el modelo y subí una radiografía.
+2. Con `datos_demo = true`, esperá la preparación y evaluación automáticas del modelo de
+   demostración. La web informa el estado y actualiza el catálogo; no hay que pulsar «Publicar».
+   El evaluador arranca solo (de 0 a 1 tarea) cuando el procesador encola la evaluación.
+3. En `/modelos`, abrí la ficha del modelo evaluado y subí una radiografía con tu cuenta de institución.
 
 Si pusiste `email_alertas`, AWS manda una confirmación de SNS que hay que aceptar una vez.
 
@@ -262,3 +263,38 @@ En Settings → Secrets and variables → Actions → New repository secret:
 
 Las tres primeras **vencen cada sesión del lab** (unas cuatro horas): hay que volver a pegarlas
 antes de correr `plan`, `aplicar` o `destruir`.
+
+## Inicialización automática de modelos
+
+Con `datos_demo = true`, el constructor ejecuta `python -m tools.demo_assets`: descarga los
+pesos desde una revisión fija y comprueba tamaño y SHA-256, conserva los artefactos existentes
+y prepara y verifica los 200 casos de evaluación. Se publica el manifiesto al final y una marca
+de finalización en el bucket de modelos. No se versiona el binario por falta de licencia
+de redistribución declarada; contrato y manifiesto sí viajan en el paquete.
+
+El procesador, después de migrar la base, reutiliza el caso de uso de publicación con un
+candado y una outbox transaccional. Confirma la fila antes de enviar a SQS y conserva modelos
+ya evaluados. El envío se intenta hasta tres veces; un pendiente sin noticias puede reenviarse
+a los 15 minutos. Los errores de evaluación requieren recuperación explícita. SQS mantiene
+su semántica de entrega al menos una vez; no se promete entrega exactamente una vez ante
+una caída entre envío y confirmación. La preparación nunca usa tokens de administrador.
+
+`datos_demo = false` desactiva preparación y registro sin borrar datos existentes. API Gateway
+permite consultar `GET /api/publico/demo` sin autenticación: solo devuelve estado y, cuando
+corresponde, el ID público del modelo. Las inferencias mantienen sus permisos de Cognito.
+
+Para comprobar la finalización desde tu PC (sin credenciales AWS):
+
+```bash
+python3 tools/esperar_modelo.py --url "<salida api de Terraform>" --timeout 1800
+```
+
+Si falla, revisá el log del constructor y `/ecs/ateneo/procesador` y `/ecs/ateneo/evaluador`.
+Tras corregir los artefactos, la recuperación del registro puede ejecutarse como tarea puntual
+con la imagen backend, entorno y secreto de la definición del procesador:
+`python -m app.reintentar_demo`. No republica un modelo `ok` ni cancela uno `en_curso`.
+
+El empaquetado usa una lista explícita y copia bytes a `.build/source-<hash>` antes de generar
+el ZIP; no lee binarios con `file()` ni incluye estados o secretos. Requiere `python3` en la
+máquina que corre Terraform (disponible en CloudShell). La terminación de `apply` no asegura
+que ya haya terminado la evaluación: verificá el endpoint o usá el comando de espera.

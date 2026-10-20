@@ -3,12 +3,19 @@ import { mensajeDeError } from "../api/cliente";
 import { listarDisponibles, listarPublicados } from "../api/modelos";
 import type { Modelo, ModeloDisponible } from "../api/tipos";
 import { useSesion } from "./useSesion";
+import { get } from "../api/cliente";
+
+export interface EstadoDemo {
+  activo: boolean;
+  estado: "desactivado" | "preparando" | "pendiente" | "en_curso" | "ok" | "error";
+}
 
 export interface EstadoModelos {
   publicados: Modelo[];
   disponibles: ModeloDisponible[];
   cargando: boolean;
   error: string | null;
+  demo: EstadoDemo | null;
   /** Vuelve a pedir las dos listas. */
   refrescar: () => Promise<void>;
   /** Reemplaza (o agrega al frente) un modelo en la lista de publicados. */
@@ -28,6 +35,8 @@ export function useModelos(): EstadoModelos {
   const [disponibles, setDisponibles] = useState<ModeloDisponible[]>([]);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [demo, setDemo] = useState<EstadoDemo | null>(null);
+  const consultando = useRef(false);
   const montado = useRef(true);
 
   useEffect(() => {
@@ -38,27 +47,39 @@ export function useModelos(): EstadoModelos {
   }, []);
 
   const refrescar = useCallback(async () => {
+    if (consultando.current) return;
+    consultando.current = true;
     setCargando(true);
     setError(null);
     try {
-      const [p, d] = await Promise.all([
+      const [p, d, estadoDemo] = await Promise.all([
         listarPublicados(),
         conSesion ? listarDisponibles() : Promise.resolve<ModeloDisponible[]>([]),
+        get<EstadoDemo>("/publico/demo"),
       ]);
       if (!montado.current) return;
       setPublicados(p);
       setDisponibles(d);
+      setDemo(estadoDemo);
     } catch (e) {
       if (!montado.current) return;
       setError(mensajeDeError(e));
     } finally {
       if (montado.current) setCargando(false);
+      consultando.current = false;
     }
   }, [conSesion]);
 
   useEffect(() => {
     void refrescar();
   }, [refrescar]);
+
+  useEffect(() => {
+    const preparando = demo === null || (demo.activo && ["preparando", "pendiente", "en_curso"].includes(demo.estado));
+    if (!preparando) return;
+    const timer = window.setInterval(() => void refrescar(), 5000);
+    return () => window.clearInterval(timer);
+  }, [demo, refrescar]);
 
   const actualizarModelo = useCallback((modelo: Modelo) => {
     setPublicados((previos) =>
@@ -68,5 +89,5 @@ export function useModelos(): EstadoModelos {
     );
   }, []);
 
-  return { publicados, disponibles, cargando, error, refrescar, actualizarModelo };
+  return { publicados, disponibles, cargando, error, demo, refrescar, actualizarModelo };
 }

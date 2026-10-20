@@ -5,9 +5,10 @@ terraform {
   required_version = ">= 1.10"
 
   required_providers {
-    aws     = { source = "hashicorp/aws", version = "~> 6.0" }
-    random  = { source = "hashicorp/random", version = "~> 3.6" }
-    archive = { source = "hashicorp/archive", version = "~> 2.4" }
+    aws      = { source = "hashicorp/aws", version = "~> 6.0" }
+    random   = { source = "hashicorp/random", version = "~> 3.6" }
+    archive  = { source = "hashicorp/archive", version = "~> 2.4" }
+    external = { source = "hashicorp/external", version = "~> 2.3" }
   }
 
   # El estado vive en un bucket propio, creado una sola vez con scripts/bootstrap-estado.sh.

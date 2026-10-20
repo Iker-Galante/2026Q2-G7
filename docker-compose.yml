@@ -27,6 +27,7 @@ x-backend: &backend
   DATABASE_URL: postgresql://ateneo:ateneo@db:5432/ateneo
   BUCKET_MODELOS: ateneo-modelos
   BUCKET_ESTUDIOS: ateneo-estudios
+  DATOS_DEMO: ${DATOS_DEMO:-true}
 
 services:
   db:
@@ -73,6 +74,18 @@ services:
     image: softwaremill/elasticmq-native:1.6.16
     ports: ["9324:9324"]
     volumes: [./docker/elasticmq.conf:/opt/elasticmq.conf:ro]
+
+  demo-init:
+    build: { context: ., dockerfile: docker/Dockerfile.ml }
+    command: python -m tools.demo_assets --cache /salida
+    environment:
+      <<: *aws
+      DATOS_DEMO: ${DATOS_DEMO:-true}
+      BUCKET_MODELOS: ateneo-modelos
+      BUCKET_EVALUACION: ateneo-evaluacion
+    volumes: [demo-cache:/salida]
+    depends_on:
+      minio-init: { condition: service_completed_successfully }
 
   # En AWS las aplica el procesador al arrancar; acá, antes de que arranquen la API y él.
   migraciones:
@@ -157,3 +170,4 @@ volumes:
   db-datos:
   minio-datos:
   modelos-cache:
+  demo-cache:

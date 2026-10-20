@@ -36,6 +36,7 @@ locals {
         COGNITO_USER_POOL_ID = aws_cognito_user_pool.ateneo.id
         COGNITO_CLIENT_IDS   = join(",", [for c in aws_cognito_user_pool_client.web : c.id])
         WEB_DIR              = "/sin-sitio" # el sitio lo sirve S3; la api atiende solo /api
+        DATOS_DEMO           = tostring(var.datos_demo)
       }
     }
     procesador = {
@@ -44,6 +45,7 @@ locals {
       entorno = {
         BUCKET_MODELOS  = local.buckets.modelos
         BUCKET_ESTUDIOS = local.buckets.estudios
+        DATOS_DEMO      = tostring(var.datos_demo)
       }
     }
     worker = {

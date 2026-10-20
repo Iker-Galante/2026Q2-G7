@@ -34,7 +34,7 @@ variable "email_alertas" {
 }
 
 variable "datos_demo" {
-  description = "El constructor siembra el modelo de la E2 en el bucket de modelos y el conjunto de 200 casos de Hugging Face en el de evaluación. Queda apretar «Publicar»."
+  description = "Prepara el modelo verificado y 200 casos de demostración; el procesador publica y encola su evaluación automáticamente."
   type        = bool
   default     = true
 }

@@ -280,6 +280,61 @@
   gap: 10px;
 }
 
+.vidrio-descripcion {
+  margin: 0 0 16px;
+  max-width: 52ch;
+  font-size: 15px;
+  line-height: 1.5;
+  opacity: 0.9;
+}
+
+.vidrio-disponibilidad {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 16px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.vidrio-disponibilidad::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #8be2bb;
+}
+
+.modelos-listos {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 24px;
+  margin-bottom: 24px;
+  border: 1px solid color-mix(in srgb, var(--acento) 30%, var(--borde));
+  border-radius: var(--radio);
+  background: color-mix(in srgb, var(--acento) 5%, var(--superficie));
+}
+
+.modelos-listos > div {
+  flex: 1 1 280px;
+}
+
+.modelos-listos p {
+  margin: 8px 0 0;
+  max-width: 65ch;
+}
+
+.modelos-listos p:last-child {
+  color: var(--texto-suave);
+}
+
+.opcion-catalogo {
+  margin: 0 0 24px;
+}
+
 .vidrio-datos {
   margin: 0;
   display: grid;

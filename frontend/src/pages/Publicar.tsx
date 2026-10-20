@@ -3,6 +3,8 @@ import type { ContratoModelo, Modelo } from "../api/tipos";
 import ListaDisponibles, { clave } from "../components/ListaDisponibles";
 import { Flecha } from "../components/Navegacion";
 import SubirModelo from "../components/SubirModelo";
+import ModelosListos from "../components/ModelosListos";
+import EstadoDemo from "../components/EstadoDemo";
 import { Enlace, rutaDeModelo } from "../enrutador";
 import { useModelos } from "../hooks/useModelos";
 import { usePublicacion } from "../hooks/usePublicacion";
@@ -60,13 +62,19 @@ export default function Publicar() {
     <div className="marco pagina">
       <header className="cabecera-pagina">
         <div>
-          <h1>Publicar un modelo</h1>
+          <h1>Publicar un modelo propio</h1>
           <p className="bajada">
-            Subí el ONNX y su contrato. Lo evaluamos contra el conjunto reservado de su tipo de
-            estudio y entra al catálogo con esa medida.
+            Publicar es opcional. Si querés sumar un modelo al catálogo, subí el ONNX y su contrato.
+            Lo evaluamos contra el conjunto reservado de su tipo de estudio.
           </p>
         </div>
       </header>
+
+      <ModelosListos modelos={modelos.publicados} conEnlace />
+      <EstadoDemo demo={modelos.demo} />
+      <p className="opcion-catalogo">
+        ¿Solo querés analizar un estudio? <Enlace a="/modelos">Ir a los modelos disponibles</Enlace>.
+      </p>
 
       {modelos.error && (
         <div className="caja-error" role="alert">

@@ -11,5 +11,6 @@ COPY ateneo_ml ./ateneo_ml
 COPY worker ./worker
 COPY evaluador ./evaluador
 COPY tools ./tools
+COPY models ./models
 RUN mkdir -p /mnt/modelos /opt/ml/tmp
 CMD ["python", "-m", "worker.main"]

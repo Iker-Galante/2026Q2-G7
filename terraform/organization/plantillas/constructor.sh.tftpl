@@ -76,27 +76,12 @@ docker rm "$contenedor"
 aws s3 sync ./sitio "s3://${bucket_web}/" --delete --exclude config.json --region ${region}
 
 %{ if datos_demo ~}
-# Datos de demostración (sección 10): el modelo de la E2 en el bucket de modelos, listo para
-# «Publicar», y el conjunto reservado de 200 casos de Hugging Face en el de evaluación. Si algo
-# falla acá, las imágenes y el sitio ya quedaron: solo se avisa en el log.
-sembrar_demo() {
-  local demo=/opt/demo
-  mkdir -p $demo
-  if ! aws s3api head-object --bucket ${bucket_evaluacion} --key torax-rx/v1/manifiesto.json --region ${region} >/dev/null 2>&1; then
-    docker run --rm -v $demo:/salida "${registro}/ateneo/ml:${version}" \
-      python tools/preparar_conjunto.py --hf hf-vision/chest-xray-pneumonia --split test --por-clase 100 --salida /salida/torax-rx/v1
-    aws s3 sync $demo/torax-rx/v1 "s3://${bucket_evaluacion}/torax-rx/v1/" --region ${region}
-  fi
-  docker run --rm -v $demo:/salida "${registro}/ateneo/ml:${version}" \
-    python tools/descargar_modelo.py --carpeta /salida/modelo --solo-descargar
-  local prefijo
-  prefijo=$(python3 -c "import json; d = json.load(open('$demo/modelo/modelo.json')); print('modelos/' + d['nombre'] + '/' + d['version'] + '/')")
-  if ! aws s3api head-object --bucket ${bucket_modelos} --key "$prefijo"modelo.json --region ${region} >/dev/null 2>&1; then
-    aws s3 cp $demo/modelo/modelo.onnx "s3://${bucket_modelos}/$prefijo"modelo.onnx --region ${region}
-    aws s3 cp $demo/modelo/modelo.json "s3://${bucket_modelos}/$prefijo"modelo.json --region ${region}
-  fi
-}
-sembrar_demo || echo "datos de demostración: no se pudieron sembrar; el resto quedó listo"
+# La misma preparación verificada que Compose. El procesador registra y encola
+# cuando vea la marca de artefactos completos. --network host permite usar IMDSv2.
+docker run --rm --network host -v /opt/demo:/salida \
+  -e AWS_DEFAULT_REGION=${region} -e AWS_REGION=${region} \
+  -e BUCKET_MODELOS=${bucket_modelos} -e BUCKET_EVALUACION=${bucket_evaluacion} \
+  "${registro}/ateneo/ml:${version}" python -m tools.demo_assets --cache /salida
 %{ endif ~}
 
 echo "constructor terminado: ${version}"

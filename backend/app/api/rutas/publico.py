@@ -10,13 +10,21 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
 from ...aplicacion.casos_uso.modelos import ConsultarModelo, ListarModelos
 from ..dependencias import dep_consultar_modelo, dep_listar_modelos
 from ..esquemas import ErrorRespuesta, ModeloRespuesta
 
 router = APIRouter(prefix="/api/publico", tags=["publico"])
+
+
+@router.get("/demo")
+def demo(request: Request):
+    from ...demo import estado_demo
+    from ...infraestructura.aws import cliente_s3
+    c = request.app.state.contenedor
+    return estado_demo(c.settings, c.pool, cliente_s3(c.settings.aws_region))
 
 
 @router.get("/modelos", response_model=list[ModeloRespuesta])

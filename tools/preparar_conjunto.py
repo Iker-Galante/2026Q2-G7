@@ -96,6 +96,7 @@ def main() -> int:
     p.add_argument("--version", default=None, help="por defecto, el nombre de la carpeta de --salida")
     p.add_argument("--semilla", type=int, default=42)
     p.add_argument("--criterios", default=None)
+    p.add_argument("--sin-optimizar", action="store_true", help="PNG sin compresión adicional; mismos píxeles")
     a = p.parse_args()
     if not a.origen and not a.hf:
         raise SystemExit("pasá una carpeta o --hf <dataset>")
@@ -115,7 +116,7 @@ def main() -> int:
     for clase, datos in crudos:
         nombre = f"{uuid.uuid4()}.png"            # nombre opaco: nada que insinúe el diagnóstico
         with Image.open(io.BytesIO(datos)) as img:
-            img.convert("RGB").save(casos_dir / nombre, format="PNG", optimize=True)
+            img.convert("RGB").save(casos_dir / nombre, format="PNG", optimize=not a.sin_optimizar)
         verdad.append({"caso": nombre, "etiqueta": clase})
 
     rng.shuffle(verdad)                            # que el orden tampoco delate la clase
@@ -135,6 +136,9 @@ def main() -> int:
         "etiquetas": sorted({v["etiqueta"] for v in verdad}),
         "criterios": a.criterios or f"{origen_txt}: hasta {a.por_clase} por clase, PNG RGB, semilla {a.semilla}",
         "hash": f"sha256:{h.hexdigest()}",
+        "origen": a.hf or str(a.origen),
+        "split": a.split if a.hf else None,
+        "semilla": a.semilla,
     }
     (salida / "manifiesto.json").write_text(json.dumps(manifiesto, indent=2, ensure_ascii=False) + "\n",
                                             encoding="utf-8")

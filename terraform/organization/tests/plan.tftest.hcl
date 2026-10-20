@@ -73,6 +73,11 @@ mock_provider "aws" {
 
 mock_provider "random" {}
 mock_provider "archive" {}
+mock_provider "external" {
+  mock_data "external" {
+    defaults = { result = { directorio = "/mock/paquete" } }
+  }
+}
 
 variables {
   sufijo = "prueba"

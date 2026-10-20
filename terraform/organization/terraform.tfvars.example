@@ -9,7 +9,7 @@ email_alertas = ""
 # Sufijo de los buckets y del dominio de Cognito. Vacío = uno al azar que queda fijo en el estado.
 sufijo = ""
 
-# El constructor siembra el modelo de la E2 y el conjunto de 200 casos de Hugging Face.
+# Prepara, publica y evalúa automáticamente el modelo de demo con 200 casos.
 datos_demo = true
 
 # false si el laboratorio no deja asociar un WAF al ALB.

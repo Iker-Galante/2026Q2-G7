@@ -195,8 +195,8 @@ def test_la_ficha_del_catalogo_se_ve_sin_token(cliente):
     assert r.status_code == 200 and r.json()["id"] == str(m.id)
 
 
-def test_bajo_publico_solo_esta_el_catalogo(cliente):
-    """API Gateway exime el prefijo entero, así que nada más puede colgar de /api/publico/."""
+def test_bajo_publico_solo_catalogo_y_estado_demo(cliente):
+    """Las rutas exentas de JWT solo consultan el catálogo o un estado sin datos reservados."""
     app, _ = cliente
     rutas = sorted(r.path for r in app.routes if getattr(r, "path", "").startswith("/api/publico"))
-    assert rutas == ["/api/publico/modelos", "/api/publico/modelos/{modelo_id}"]
+    assert rutas == ["/api/publico/demo", "/api/publico/modelos", "/api/publico/modelos/{modelo_id}"]

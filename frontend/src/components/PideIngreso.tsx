@@ -1,5 +1,6 @@
 import { crearCuenta, ingresar } from "../api/sesion";
 import { Flecha } from "./Navegacion";
+import { Enlace } from "../enrutador";
 
 interface Props {
   /** Dentro de otro panel (la ficha): sin encabezado de página. */
@@ -41,8 +42,11 @@ export default function PideIngreso({ compacto = false, texto }: Props) {
     <div className="marco angosto pagina">
       <header className="cabecera-pagina centrada">
         <h1>Ingresá para publicar</h1>
-        <p className="bajada">{texto ?? "Publicar un modelo requiere una cuenta de publicador."}</p>
+        <p className="bajada">{texto ?? "Publicar uno propio es opcional y requiere una cuenta de publicador. Podés explorar el catálogo sin publicar un modelo."}</p>
       </header>
+      <p className="opcion-catalogo">
+        <Enlace a="/modelos">Ver los modelos disponibles</Enlace>
+      </p>
       {acciones}
     </div>
   );
