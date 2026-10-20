@@ -1,339 +1,281 @@
 # Ateneo · Arquitectura de la aplicación
 
-> Estado: borrador 2 · 2026-09-07
-> Complementa a [specs.md](specs.md) (qué hace) y a los documentos de infraestructura
-> (`ateneo-en-aws.html`, `ateneo-paso-a-paso.html`). Este documento dice **cómo está construido el
-> código** para que entre en esa infraestructura sin tocarla y para que crezca sin reescribirse.
+> Estado: borrador 3 · 2026-10-15 · Entrega 3
+> Complementa a [specs.md](specs.md) (qué hace) y a «Ateneo en AWS 2.0» (la infraestructura, en
+> [terraform/](terraform/README.md)). Este documento dice **cómo está construido el código** para
+> que entre en esa infraestructura y para que crezca sin reescribirse.
 
 ---
 
 ## 1. Componentes y dónde corren
 
-| Componente | Repo | Capa de red | Cómo llega | Proceso |
-|------------|------|-------------|------------|---------|
-| Frontend | `frontend/` | S3 `ateneo-web` → copiado a cada instancia app al arrancar | `npm run build` · `aws s3 sync dist/` · `refrescar.sh asg-app` | lo sirve el backend en `/` |
-| Backend (API + despachador) | `backend/` | app (`asg-app`, `t3.small`) | `backend-latest.zip` → user data de `lt-app` | `uvicorn app.main:app :8080 --workers 2` |
-| Worker | `worker/` + `ateneo_ml/` | inferencia (`asg-inf`, `c5.large`, sin internet) | `worker-latest.zip` → AMI dorada + user data de `lt-worker` | `uvicorn worker.main:app :8081` |
-| Evaluador | `evaluador/` + `ateneo_ml/` | evaluación (`eval-1`, `c5.large`, aislada) | mismo `worker-latest.zip` → `lt-eval` | `python -m evaluador.main` |
-| Migraciones | `migraciones/` | se aplican desde una instancia app | `psql -f` por Session Manager | — |
-| Herramientas | `tools/` | tu máquina / CloudShell | no se despliegan | — |
+Cuatro servicios de ECS sobre Fargate, dos imágenes, y el sitio en S3.
+
+| Componente | Repo | Imagen | Capa de red | Proceso | Entrada |
+|------------|------|--------|-------------|---------|---------|
+| Sitio | `frontend/` | etapa `frontend` de `backend` | bucket web, por HTTP | — | el navegador |
+| api | `backend/` | `backend` | aplicación | `uvicorn app.main:app :8080` | 8080, solo desde el ALB interno |
+| procesador | `backend/` | `backend` | aplicación | `python -m app.procesador` | ninguna: lee `resultados` |
+| worker | `worker/` + `ateneo_ml/` | `ml` | inferencia, sin internet | `python -m worker.main` | ninguna: lee `inferencias` |
+| evaluador | `evaluador/` + `ateneo_ml/` | `ml` | evaluación, aislada | `python -m evaluador.main` | ninguna: lee `evaluaciones` |
+| Migraciones | `migraciones/` | `backend` | — | las aplica el procesador al arrancar | — |
+| Herramientas | `tools/` | `ml` | tu máquina, o el constructor con `datos_demo` | — | — |
 
 ```
-                                ┌──────────────────────────────┐
- navegador ── http://<alb> ────►│ ALB → backend (capa app)     │
-   │  GET /  (sitio estático)   │  · API  /api/*               │   8081   ┌──────────────────┐
-   │  /api/* (JSON)             │  · despachador (tarea fondo) ├─────────►│ ALB int → worker │
-   │                            └────────┬───────────┬─────────┘          └───┬──────────┬───┘
-   │ POST prefirmado                     │           │                        │          │
-   ▼                                     ▼           ▼                        ▼          ▼
- S3 estudios ◄──────────────────── Postgres      S3 modelos ──────────────► EFS (caché)
-                                        ▲
-                             poll 10 s  │  UPDATE modelo (accuracy, metricas)
-                           ┌────────────┴─────────────┐
-                           │ evaluador (eval-1)       │──► S3 evaluación (solo por vpce)
-                           └──────────────────────────┘──► S3 modelos
+ navegador ──HTTP──► S3 sitio (bucket web)
+     │
+     ├──HTTPS + token──► API Gateway ──VPC Link──► ALB interno + WAF ──► api ──► RDS
+     │                                                                    │      ▲
+     │  POST prefirmado                                    inferencias ◄──┤      │ escribe
+     ▼                                                    evaluaciones ◄──┘      │
+ S3 estudios · S3 modelos                                      │                 │
+                              worker ◄── inferencias ──────────┘                 │
+                                │ ──► resultados ──► procesador ─────────────────┘
+                              evaluador ◄── evaluaciones
+                                │ ──► resultados
+                                └──► S3 evaluación (solo por el endpoint de la VPC)
 ```
 
-Las flechas son exactamente las que los security groups permiten (§03 de la guía). No hay ninguna
-otra: **nadie llama al evaluador**, **el worker no toca la base**, y **el navegador solo habla con
-el ALB y con S3**.
+Las flechas son las que permiten los grupos de seguridad (`terraform/seguridad.tf`). **El worker y
+el evaluador no tocan la base ni tienen credenciales**: publican en `resultados` y el procesador,
+el único escritor, lo aplica. **Nadie llama al worker ni al evaluador**: no abren puertos.
 
 ## 2. Estructura del repositorio
 
 ```
 TP-AWS/
 ├── specs.md · architecture.md · README.md
-├── backend/                     # FastAPI · capa app
+├── backend/                     # imagen backend: api y procesador
 │   ├── app/
-│   │   ├── main.py              # crea la app, monta el sitio en "/", arranca el despachador (lifespan)
+│   │   ├── main.py              # la api: crea la app y monta el sitio en "/" (solo en local)
+│   │   ├── procesador.py        # el procesador: migraciones, cola resultados, reenviador
 │   │   ├── config.py            # Settings (pydantic-settings) desde variables de entorno
 │   │   ├── dominio/             # entidades y reglas puras; sin FastAPI, sin boto3, sin SQL
-│   │   │   ├── modelo.py · estudio.py · trabajo.py
+│   │   │   ├── modelo.py · estudio.py · trabajo.py · usuario.py
 │   │   │   ├── contrato.py      # validación de modelo.json (misma que ateneo_ml, ver §7)
-│   │   │   └── errores.py       # NoEncontrado, Conflicto, EntradaInvalida, ServicioNoDisponible
+│   │   │   └── errores.py       # NoEncontrado, Conflicto, EntradaInvalida, NoAutenticado, ServicioNoDisponible
 │   │   ├── aplicacion/          # casos de uso; dependen solo de puertos
-│   │   │   ├── puertos.py       # Protocols: repositorios, almacenes, cliente de inferencia, reloj
-│   │   │   ├── casos_uso/
-│   │   │   │   ├── listar_modelos_disponibles.py · publicar_modelo.py · consultar_modelo.py
-│   │   │   │   ├── crear_estudio.py · encolar_inferencia.py · consultar_trabajo.py
-│   │   │   │   └── despachar_trabajo.py          # lo usa el despachador, no la API
-│   │   │   └── despachador.py   # bucle: tomar pendiente → DespacharTrabajo → dormir
+│   │   │   ├── puertos.py       # Protocols: repositorios, almacenes, colas, registro de resultados
+│   │   │   └── casos_uso/ modelos.py · estudios.py · inferencias.py · resultados.py
 │   │   ├── infraestructura/     # adaptadores; uno por tecnología
-│   │   │   ├── postgres/        # pool psycopg 3 · repositorios con SQL explícito
+│   │   │   ├── postgres/        # pool psycopg 3 · repositorios con SQL explícito · migraciones
 │   │   │   ├── s3/              # almacén de estudios (prefirmado) · catálogo de modelos en S3
-│   │   │   └── http/            # cliente del ALB interno (httpx, timeout)
+│   │   │   ├── sqs/             # ColaSqs: enviar, recibir, borrar
+│   │   │   ├── cognito/         # verificador de access tokens (JWKS del user pool)
+│   │   │   └── aws.py           # los clientes de boto3
 │   │   └── api/                 # FastAPI: routers, esquemas pydantic, dependencias (DI), errores, sitio
-│   │       ├── dependencias.py · esquemas.py · errores.py · sitio.py
-│   │       └── rutas/ salud.py · modelos.py · estudios.py · inferencias.py · trabajos.py
 │   ├── tests/
 │   └── requirements.txt
 ├── ateneo_ml/                   # compartido worker + evaluador · SOLO numpy, pillow, onnxruntime
-│   ├── contrato.py              # ContratoModelo (dataclass) + parse/validación de modelo.json
-│   ├── decodificadores.py       # DecodificadorImagen (Protocol) · Pillow · (Dicom después)
-│   ├── preprocesamiento.py      # imagen → tensor según el contrato (layout, color, escala, media/desvío)
-│   ├── motor.py                 # Motor (Protocol) · OnnxMotor
-│   ├── postprocesamiento.py     # salida cruda → {etiqueta: p} + predicción
-│   └── metricas.py              # accuracy, matriz, macro, binarias (numpy)
-├── worker/                      # FastAPI · capa inferencia
-│   ├── main.py · config.py · aplicacion.py · puertos.py
-│   └── infraestructura/ proveedor_efs_s3.py · fuente_s3.py
-├── evaluador/                   # proceso largo · eval-1
-│   ├── main.py · config.py · aplicacion.py · puertos.py
-│   └── infraestructura/ cola_postgres.py · conjunto_s3.py · modelo_s3.py
+├── worker/                      # imagen ml · lee inferencias, publica en resultados
+│   ├── main.py · config.py · aplicacion.py · puertos.py · consumidor.py
+│   └── infraestructura/ proveedor_efs_s3.py · fuente_s3.py · cola_sqs.py
+├── evaluador/                   # imagen ml · lee evaluaciones, publica en resultados
+│   ├── main.py · config.py · aplicacion.py · puertos.py · consumidor.py
+│   └── infraestructura/ conjunto_s3.py · modelo_s3.py · colas_sqs.py
 ├── frontend/                    # React + Vite + TypeScript
-│   └── src/ api/ · hooks/ · components/ · pages/Laboratorio.tsx
-├── migraciones/ 001_inicial.sql
-├── infra/                       # user data, .env.example, refrescar.sh, apagar.sh, prender.sh, placeholders/
-├── tools/                       # descargar_modelo · verificar_modelo · preparar_conjunto · subir_conjunto · migrar
-├── docker/                      # Dockerfile.backend · Dockerfile.worker (imagen dorada) · Dockerfile.tests
-├── docker-compose.yml           # Postgres 16 + MinIO para desarrollo local
-└── .github/workflows/ci.yml     # lint + tests + import-linter
+├── migraciones/ 001_inicial.sql · 002_procesador.sql
+├── tools/                       # descargar_modelo · verificar_modelo · preparar_conjunto · subir_conjunto
+├── docker/                      # Dockerfile.backend · Dockerfile.ml · Dockerfile.tests · elasticmq.conf
+├── docker-compose.yml           # la misma topología en local: Postgres, MinIO, ElasticMQ y los cuatro servicios
+└── terraform/                   # toda la infraestructura: terraform apply levanta todo
 ```
 
-**Por qué `ateneo_ml` es un paquete aparte.** La accuracy que escribe el evaluador solo mide lo que
-el usuario recibe si los dos corren el mismo preprocesamiento, el mismo motor y el mismo
-posprocesamiento. Un paquete compartido lo garantiza por construcción. El backend **no** lo
-importa: no tiene ONNX Runtime y no lo necesita.
-
-**Un cambio a la guía.** El zip del worker pasa a incluir el paquete compartido:
-
-```bash
-zip -r /tmp/worker-latest.zip worker/ evaluador/ ateneo_ml/ -x "*/__pycache__/*" "*.pyc"
-```
-
-Los `ExecStart` de systemd no cambian: `worker.main:app` y `evaluador.main` siguen existiendo, y
-los tres paquetes quedan como hermanos en `/opt/worker`, que es el `WorkingDirectory`.
+**Por qué `ateneo_ml` es un paquete aparte, y worker y evaluador comparten imagen.** La accuracy
+que publica el evaluador solo mide lo que el usuario recibe si los dos corren el mismo
+preprocesamiento, el mismo motor y el mismo posprocesamiento. Un paquete compartido en una sola
+imagen lo garantiza por construcción. El backend **no** lo importa: no tiene ONNX Runtime.
 
 ## 3. Principios de diseño
 
 ### 3.1 Puertos y adaptadores en cada servicio
 
 ```
-   api / main / despachador  ──►  aplicacion (casos de uso)  ──►  dominio
-              │                              ▲
-              └──────── infraestructura ─────┘   (los adaptadores implementan los puertos)
+   api / procesador / consumidores  ──►  aplicacion (casos de uso)  ──►  dominio
+              │                                      ▲
+              └──────────── infraestructura ─────────┘   (los adaptadores implementan los puertos)
 ```
 
-- **Dominio**: dataclasses y reglas (`Trabajo.marcar_ok(...)`, `Trabajo.marcar_fallido(...)` que
-  decide si vuelve a `pendiente` o pasa a `error`, `Modelo.acepta(estudio)`,
-  `Modelo.republicar()`). Sin imports de frameworks.
-- **Aplicación**: un caso de uso por archivo, una clase con `ejecutar(...)`. Recibe puertos por
-  constructor. No sabe si detrás hay S3 o MinIO, Postgres o un dict.
-- **Puertos**: `typing.Protocol`, chicos, con nombre de negocio (`AlmacenEstudios`, no `S3Client`).
-- **Infraestructura**: único lugar con `boto3`, `psycopg`, `httpx`, `onnxruntime`.
-- **API / main / despachador**: traducen (HTTP o reloj) ↔ casos de uso. `main.py` y
-  `dependencias.py` son el *composition root*: lo único que instancia adaptadores.
+- **Dominio**: dataclasses y reglas (`Modelo.republicar()`, `Modelo.verificar_compatible(estudio)`,
+  `Estudio.confirmar(...)`). Sin imports de frameworks.
+- **Aplicación**: casos de uso, una clase con `ejecutar(...)`. Reciben puertos por constructor. No
+  saben si detrás hay S3 o MinIO, SQS o ElasticMQ, Postgres o un dict.
+- **Puertos**: `typing.Protocol`, chicos, con nombre de negocio (`ColaEvaluaciones`, no `SqsClient`).
+- **Infraestructura**: único lugar con `boto3`, `psycopg`, `jwt`, `onnxruntime`.
+- **api / procesador / consumidores**: traducen (HTTP o mensajes) ↔ casos de uso.
+  `dependencias.py` y `procesador.py` son los *composition roots*: lo único que instancia adaptadores.
 
 ### 3.2 SOLID, con el ejemplo concreto de este código
 
 | Principio | Cómo se ve acá | Qué evita |
 |-----------|----------------|-----------|
-| **S** · Responsabilidad única | `EncolarInferencia` solo valida e inserta; `DespacharTrabajo` solo lleva un trabajo al worker y guarda; el worker solo infiere; el evaluador solo evalúa. El worker no escribe en la base y la API no llama al worker. | Un `main.py` con SQL, boto3, httpx y reglas mezcladas. |
+| **S** · Responsabilidad única | `EncolarInferencia` solo valida, inserta y encola; `AplicarResultado` solo aplica lo que llega de la cola; el worker solo infiere; el evaluador solo evalúa. El worker no escribe en la base y la API no llama al worker. | Un `main.py` con SQL, boto3 y reglas mezcladas. |
 | **O** · Abierto/cerrado | Un modelo nuevo con otro tamaño, layout NCHW u otra normalización **no cambia código**: cambia `modelo.json`. Un formato de imagen nuevo es un `DecodificadorImagen` registrado por extensión; una tarea nueva (`segmentacion`) es un posprocesador y un calculador de métricas más. | `if modelo == "neumonia": … elif …` |
 | **L** · Sustitución de Liskov | Todos los adaptadores de un puerto cumplen el contrato **incluyendo los errores**: un objeto que no existe lanza `NoEncontrado` en S3, en MinIO y en el fake de memoria. | Tests que pasan con el fake y fallan en AWS. |
-| **I** · Segregación de interfaces | `ClienteInferencia` tiene un solo método. `ColaTrabajos` tiene `tomar_pendiente()` y `guardar()`; `ColaModelos` tiene `tomar_pendiente()`, `terminar_ok()`, `terminar_error()`, `reencolar_en_curso()`. Ningún caso de uso recibe métodos que no usa. | Un `Repositorio` gigante. |
-| **D** · Inversión de dependencias | Casos de uso y adaptadores importan `puertos.py`; **nadie importa `infraestructura` salvo `main.py` y `dependencias.py`**. Lo verifica `import-linter` en CI. | Cambiar de psycopg a SQLAlchemy tocando casos de uso. |
+| **I** · Segregación de interfaces | `ColaInferencias` y `ColaEvaluaciones` tienen un solo método. `TrabajosSinEnviar` y `EvaluacionesSinNoticias` exponen solo lo que usa el reenviador; `RegistroResultados`, solo lo que escribe el procesador. Ningún caso de uso recibe métodos que no usa. | Un `Repositorio` gigante. |
+| **D** · Inversión de dependencias | Casos de uso y adaptadores importan `puertos.py`; **nadie importa `infraestructura` salvo `dependencias.py` y `procesador.py`**. | Cambiar de psycopg a SQLAlchemy tocando casos de uso. |
 
 Reglas adicionales:
 
 - **Errores del dominio, no de la tecnología.** Los adaptadores traducen (`ClientError 404` →
-  `NoEncontrado`; `httpx.TimeoutException` → `ServicioNoDisponible`). Un solo `exception_handler`
+  `NoEncontrado`; un error de SQS → `ServicioNoDisponible`). Un solo `exception_handler`
   los convierte en HTTP. Los routers no tienen `try/except`.
 - **Los casos de uso devuelven entidades**; la API las convierte a esquemas pydantic.
 - **Configuración inmutable y tipada** (`Settings`), cargada una vez e inyectada.
-- **Identidad y tiempo inyectados** (`Reloj`, `GeneradorIds`) para tests deterministas.
+- **Tiempo inyectado** (`Reloj`) para tests deterministas.
 
 ## 4. Backend
 
 ### 4.1 Puertos (`backend/app/aplicacion/puertos.py`)
 
 ```python
-class RepositorioModelos(Protocol):
-    def guardar(self, m: Modelo) -> None: ...                 # insert o update por (nombre, version)
-    def obtener(self, id: UUID) -> Modelo: ...                # NoEncontrado
-    def buscar(self, nombre: str, version: str) -> Modelo | None: ...
-    def listar(self) -> list[Modelo]: ...
+class RepositorioModelos(Protocol): ...          # guardar · obtener · buscar · listar
+class RepositorioEstudios(Protocol): ...         # guardar · obtener
+class RepositorioTrabajos(Protocol): ...         # guardar · obtener
 
-class RepositorioEstudios(Protocol):
-    def guardar(self, e: Estudio) -> None: ...
-    def obtener(self, id: UUID) -> Estudio: ...
+class ColaInferencias(Protocol):
+    def enviar(self, p: PeticionInferencia) -> None: ...        # ServicioNoDisponible
+class ColaEvaluaciones(Protocol):
+    def enviar(self, p: PeticionEvaluacion) -> None: ...        # ServicioNoDisponible
 
-class RepositorioTrabajos(Protocol):
-    def guardar(self, t: Trabajo) -> None: ...
-    def obtener(self, id: UUID) -> Trabajo: ...
+class RegistroResultados(Protocol):              # el procesador; cada método aplica solo si el
+    def inferencia_en_curso(...) -> bool: ...    # registro sigue pendiente o en_curso
+    def inferencia_terminada(...) -> bool: ...
+    def inferencia_fallida(...) -> bool: ...
+    def evaluacion_en_curso(...) -> bool: ...
+    def evaluacion_terminada(...) -> bool: ...
+    def evaluacion_fallida(...) -> bool: ...
 
-class ColaTrabajos(Protocol):                                 # la usa solo el despachador
-    def tomar_pendiente(self) -> Trabajo | None: ...          # SKIP LOCKED + estado=en_curso, atómico
-
-class AlmacenEstudios(Protocol):
-    def firmar_subida(self, key: str, content_type: str, max_bytes: int) -> SubidaFirmada: ...
-    def describir(self, key: str) -> ObjetoAlmacenado: ...    # NoEncontrado si no se subió
-
-class CatalogoModelosS3(Protocol):
-    def listar(self) -> list[RefModelo]: ...                  # prefijos con modelo.json
-    def leer_contrato(self, prefix: str) -> dict: ...         # NoEncontrado
-
-class ClienteInferencia(Protocol):
-    def inferir(self, p: PeticionInferencia) -> ResultadoInferencia: ...  # ServicioNoDisponible
-
-class Reloj(Protocol):
-    def ahora(self) -> datetime: ...
+class TrabajosSinEnviar(Protocol): ...           # tomar_para_reenviar · vencer_en_curso
+class EvaluacionesSinNoticias(Protocol): ...     # vencer_en_curso
+class AlmacenEstudios(Protocol): ...             # firmar_subida · describir
+class CatalogoModelosEnBucket(Protocol): ...     # listar · leer_contrato · existe · firmar_subida · …
+class VerificadorTokens(Protocol):
+    def verificar(self, token: str) -> Usuario: ...             # NoAutenticado
+class Reloj(Protocol): ...
 ```
 
-### 4.2 Los tres casos de uso que importan
+### 4.2 Los casos de uso que importan
 
 ```python
 class PublicarModelo:
-    def ejecutar(self, nombre: str, version: str) -> Modelo:
-        contrato = ContratoModelo.desde_json(self.catalogo.leer_contrato(prefix(nombre, version)))  # EntradaInvalida → 422
-        existente = self.modelos.buscar(nombre, version)
-        modelo = existente.republicar(self.reloj.ahora()) if existente else Modelo.publicar(contrato, prefix, self.reloj.ahora())
-        # republicar(): Conflicto si está pendiente/en_curso; si no, vuelve a pendiente y borra métricas
-        self.modelos.guardar(modelo)
-        return modelo
+    def ejecutar(self, nombre, version, contrato_crudo=None) -> Modelo:
+        contrato = ContratoModelo.desde_json(crudo)                         # EntradaInvalida → 422
+        modelo = existente.republicar(...) if existente else Modelo.publicar(...)   # Conflicto → 409
+        if contrato_crudo is not None:                                      # recién subido desde la web
+            self.catalogo.describir_modelo(prefix)                          # ¿llegó el ONNX?
+            self.catalogo.escribir_contrato(prefix, contrato_crudo)
+        self.modelos.guardar(modelo)                                        # pendiente
+        try:
+            self.cola.enviar(PeticionEvaluacion.de(modelo))                 # a `evaluaciones`
+        except ServicioNoDisponible:
+            modelo.no_se_pudo_encolar(...)                                  # error: se puede republicar
+            self.modelos.guardar(modelo)
 
 class EncolarInferencia:
-    def ejecutar(self, estudio_id: UUID, modelo_id: UUID) -> Trabajo:
-        estudio, modelo = self.estudios.obtener(estudio_id), self.modelos.obtener(modelo_id)
-        if estudio.estado != "subido":
-            estudio.confirmar(self.almacen.describir(estudio.s3_key))       # NoEncontrado → 409
-            self.estudios.guardar(estudio)
-        modelo.verificar_compatible(estudio)                                # EntradaInvalida → 422
-        trabajo = Trabajo.nuevo(estudio, modelo, self.reloj.ahora())        # pendiente
-        self.trabajos.guardar(trabajo)
-        return trabajo
-
-class DespacharTrabajo:
-    def ejecutar(self, trabajo: Trabajo) -> None:                           # ya viene en_curso
-        modelo, estudio = self.modelos.obtener(trabajo.modelo_id), self.estudios.obtener(trabajo.estudio_id)
+    def ejecutar(self, estudio_id, modelo_id) -> Trabajo:
+        ...                                                                 # confirmar subida, compatibilidad
+        self.trabajos.guardar(trabajo)                                      # pendiente
         try:
-            r = self.cliente.inferir(PeticionInferencia.de(trabajo, modelo, estudio, self.config))
-            trabajo.marcar_ok(r, self.reloj.ahora())
-        except ServicioNoDisponible as e:
-            trabajo.marcar_fallido(str(e), self.reloj.ahora(), max_intentos=self.config.max_intentos)
-        self.trabajos.guardar(trabajo)
+            self.cola.enviar(PeticionInferencia(...))                       # a `inferencias`
+        except ServicioNoDisponible:
+            pass                                                            # lo reenvía el procesador
+
+class AplicarResultado:                                                     # en el procesador
+    def ejecutar(self, cuerpo: dict) -> bool: ...                           # MensajeInvalido si no se entiende
 ```
 
-Cada decisión de negocio vive en el dominio (`republicar`, `confirmar`, `verificar_compatible`,
-`marcar_fallido` con la regla de los 3 intentos); los casos de uso solo ordenan llamadas. Con fakes
-en memoria se prueban en milisegundos.
+Cada decisión de negocio vive en el dominio (`republicar`, `confirmar`, `verificar_compatible`); los
+casos de uso solo ordenan llamadas. Con fakes en memoria se prueban en milisegundos.
 
-### 4.3 El despachador
+### 4.3 El procesador
 
-Es la "cola" hecha código, tal cual la §12 de la guía, y **no toca la infraestructura**: usa la
-tabla `trabajo` y el ALB interno que ya existen.
+El único que escribe resultados (decisión 04 de «Ateneo en AWS 2.0»). Un proceso por tarea, con dos
+hilos:
 
-```python
-# backend/app/aplicacion/despachador.py
-class Despachador:
-    async def correr(self, detener: asyncio.Event):
-        while not detener.is_set():
-            trabajo = await asyncio.to_thread(self.cola.tomar_pendiente)
-            if trabajo is None:
-                await asyncio.wait([detener.wait()], timeout=self.intervalo)   # 1 s
-                continue
-            await asyncio.to_thread(self.despachar.ejecutar, trabajo)
+- **Principal**: long polling de `resultados` (de a 10), `AplicarResultado` por mensaje y recién
+  después `delete_message`. Si la base falla, el mensaje no se borra: SQS lo vuelve a entregar y,
+  tras 5 intentos, lo pasa a la cola de fallidos. Un mensaje ilegible se descarta.
+- **Reenviador**, cada minuto: `ReenviarPendientes` vuelve a encolar los trabajos `pendiente` de más
+  de 10 minutos (el envío de la api falló) y vence los `en_curso` sin noticias; `VencerEvaluaciones`
+  vence los modelos `en_curso` sin noticias hace 2 horas (el evaluador murió en el último intento).
+- **Al arrancar** aplica las migraciones con `pg_advisory_lock`: dos tareas no lo hacen a la vez.
+
+Idempotencia: cada `update` lleva `where estado in ('pendiente', 'en_curso')`. Un resultado repetido
+o tardío no cambia nada, así que una entrega doble de SQS no se nota.
+
+Los mensajes de `resultados`:
+
 ```
-
-- Arranca en el `lifespan` de FastAPI, uno por proceso de uvicorn. Con 2 instancias × 2 workers hay
-  4 despachadores compitiendo por la misma tabla; `SKIP LOCKED` garantiza que un trabajo lo toma
-  uno solo. Es una consecuencia deseable: el despacho escala con la capa app.
-- `tomar_pendiente` es una sola sentencia atómica:
-
-  ```sql
-  update trabajo set estado='en_curso', actualizado=now()
-   where id = (select id from trabajo
-               where estado='pendiente' and intentos < %(max)s
-               order by actualizado for update skip locked limit 1)
-   returning *;
-  ```
-
-- **Trabajos huérfanos.** Si un proceso muere con un trabajo `en_curso`, nadie lo retoma. El mismo
-  bucle, cada minuto, devuelve a `pendiente` los `en_curso` con más de 2 minutos sin actualizar
-  (`intentos + 1`). Cubre el reemplazo de instancias de `refrescar.sh`.
-- Concurrencia por proceso: 1 trabajo a la vez. Alcanza para la demo; subirla es un semáforo.
-- Se apaga limpio: `lifespan` pone el evento y espera al bucle antes de cerrar el pool.
+{"tipo": "inferencia", "trabajo_id", "estado": "en_curso", "worker", "intento"}
+{"tipo": "inferencia", "trabajo_id", "estado": "ok", "worker", "prediccion", "probabilidades", "duracion_ms"}
+{"tipo": "inferencia", "trabajo_id", "estado": "error", "error"}
+{"tipo": "evaluacion", "modelo_id", "estado": "en_curso" | "ok" | "error", "evaluador", …métricas agregadas}
+```
 
 ### 4.4 Persistencia
 
 - `psycopg 3` + `psycopg_pool.ConnectionPool` (mín 1, máx 4 por proceso; `db.t3.micro` admite
-  ~80 conexiones).
+  ~80 conexiones). Solo api y procesador tienen `DATABASE_URL`, que ECS inyecta desde Secrets Manager.
 - SQL explícito en los repositorios, `row_factory=dict_row`, mapeo a dataclasses en un solo lugar
-  por tabla. Sin ORM (D11).
-- Una transacción por caso de uso; en la API la abre la dependencia que entrega la conexión; en
-  el despachador, `tomar_pendiente` y `guardar` son transacciones separadas a propósito (la
-  llamada al worker de hasta 30 s no puede quedar dentro de una transacción abierta).
-- Migraciones: SQL numerado + `tools/migrar.py` (tabla `migracion_aplicada`).
+  por tabla. Sin ORM.
+- Transacciones cortas, una por operación.
+- Migraciones: SQL numerado + `infraestructura/postgres/migraciones.py` (tabla `migracion_aplicada`).
 
 ### 4.5 API y sitio estático
 
 - Routers por recurso; reciben casos de uso por `Depends`. `dependencias.py` es el único módulo
-  que importa `infraestructura`.
-- `errores.py`: `NoEncontrado` 404, `Conflicto` 409, `EntradaInvalida` 422,
+  de la api que importa `infraestructura`.
+- `errores.py`: `NoAutenticado` 401, `NoEncontrado` 404, `Conflicto` 409, `EntradaInvalida` 422,
   `ServicioNoDisponible` 502.
-- `sitio.py`: monta `StaticFiles(directory=WEB_DIR, html=True)` en `/` **después** de los routers
-  (lo que se monta en `/` atrapa todo lo demás), y registra un manejador de `404` que fuera de
-  `/api` devuelve `index.html`. Si `WEB_DIR` no existe (local sin build), no monta nada.
-- `GET /health` sin dependencias ni base; `GET /api/health` agrega `socket.gethostname()`.
-- Sin CORS en la API: sitio y API comparten origen. El CORS que sí existe es el del bucket de
-  estudios, para el `POST` prefirmado (guía §04 y §10).
-- Punto de extensión para autenticación: `Depends(usuario_actual)`, hoy `Usuario.anonimo()`.
+- `sitio.py`: en local monta el sitio en `/` **después** de los routers y devuelve `index.html` para
+  cualquier `404` fuera de `/api`. En AWS el sitio está en S3 y la tarea arranca sin él.
+- `GET /health` (el health check del ALB) sin dependencias ni base; `GET /api/health` agrega el
+  hostname de la tarea.
+- Sin CORS en el backend: el sitio está en S3 y la API detrás de API Gateway, que es quien contesta
+  el CORS. El de los buckets de estudios y modelos, para el `POST` prefirmado, lo escribe Terraform.
+- **Las dos subidas son la misma pieza.** La imagen del estudio y el ONNX del modelo salen del
+  navegador hacia S3 con un `presigned POST` firmado por la API, que ata el content type y el
+  tamaño máximo; el archivo nunca atraviesa la capa de aplicación.
+- Autenticación: `Depends(usuario_actual)`. Con `COGNITO_USER_POOL_ID` y `COGNITO_CLIENT_IDS`
+  valida el access token de `Authorization: Bearer` contra las claves del user pool y devuelve un
+  `Usuario` con su `sub` y sus grupos; sin token o con uno inválido, `401 no_autenticado`. API
+  Gateway ya lo validó: esta es la segunda capa. Sin esas variables (local, tests), todos son
+  anónimos. La matriz de permisos por rol todavía no se aplica.
 
 ## 5. Worker
 
-Sin estado, sin base. Un proceso por instancia con `intra_op_num_threads = vCPU`.
+Sin estado, sin base, sin puertos. Un proceso por tarea con `intra_op_num_threads = vCPU`.
 
-```python
-class ProveedorModelos(Protocol):
-    def obtener(self, ref: RefModelo) -> ModeloCargado: ...   # contrato + sesión ONNX lista
-
-class FuenteImagenes(Protocol):
-    def leer(self, ref: RefObjeto) -> bytes: ...
-```
-
-- `ProveedorEfsS3`: busca `/mnt/modelos/<nombre>/<version>/`; si no está, baja de S3 a un
+- `Consumidor`: long polling de `inferencias` de a un mensaje. Por cada uno, `ProcesarMensaje`
+  publica `en_curso`, infiere, publica el resultado y **recién entonces** borra el mensaje.
+  - Error definitivo (imagen ilegible, modelo incompatible, objeto inexistente): publica el error
+    y borra.
+  - Error transitorio: devuelve el mensaje a la cola en 10 s. En el tercer intento publica el error
+    y lo deja: SQS lo pasa a la cola de fallidos.
+- `ProveedorEfsS3`: busca `/mnt/modelos/<nombre>/<version>/` (EFS); si no está, baja de S3 a un
   directorio temporal y hace `rename` atómico (dos workers no se pisan). LRU de sesiones cargadas.
-- `FuenteS3`: `get_object` con timeouts; `NoEncontrado` → 404.
+- `FuenteS3`: `get_object` con timeouts; `NoEncontrado` si no está.
 - `Inferir.ejecutar`: `decodificar → preprocesar → motor.inferir → posprocesar`, todo `ateneo_ml`.
-- Dependencias fijas por la AMI (`onnxruntime`, `numpy`, `pillow`, `pydicom`, `boto3`, `fastapi`,
-  `uvicorn`, `psycopg`). Agregar una es reconstruir la imagen. `ateneo_ml` respeta esa lista.
+- SIGTERM (ECS al reemplazar o achicar): termina el mensaje que tiene y sale.
 
 ## 6. Evaluador
 
-Un bucle explícito. A `eval-1` **no se entra**, así que todo queda en el log y en la fila.
+Una sola tarea, que pasa de 0 a 1 según su cola (una certificación es una medición atribuible a una
+máquina). A la tarea no se entra: todo queda en su log y en lo que publica.
 
-```python
-def main():
-    cfg = Settings(); cola, conjuntos, modelos, motor = armar(cfg)
-    cola.reencolar_en_curso()                     # si eval-1 murió a mitad de una evaluación
-    log.info("evaluador listo", instancia=cfg.instancia_id)
-    while True:
-        modelo = cola.tomar_pendiente()           # SKIP LOCKED + estado_evaluacion=en_curso
-        if modelo is None:
-            time.sleep(cfg.intervalo_segundos); continue
-        EvaluarModelo(conjuntos, modelos, motor, cola, cfg).ejecutar(modelo)
-```
-
-`EvaluarModelo.ejecutar`:
-
-1. Bajar `modelo.json` y `modelo.onnx` a un directorio temporal; construir `OnnxMotor`; validar
-   que los tensores del contrato existen en el grafo con las formas declaradas.
-2. `conjuntos.ultima_version(tipo_estudio)` (lista prefijos `vN/`), leer manifiesto y verdad,
-   validar consistencia (specs §8). Si falla: `terminar_error`.
-3. Por cada caso: `leer → decodificar → preprocesar → inferir → posprocesar`; acumular. Log cada
-   25 casos. Un caso ilegible suma a `casos_con_error`.
-4. `metricas.calcular(...)`; `terminar_ok(modelo, metricas, conjunto, version, manifiesto)`.
-5. Borrar el temporal. Cualquier excepción no prevista → `terminar_error` y el bucle sigue.
-
-```sql
--- tomar_pendiente
-update modelo set estado_evaluacion='en_curso', evaluador_id=%(yo)s
- where id = (select id from modelo where estado_evaluacion='pendiente'
-             order by publicado for update skip locked limit 1)
- returning *;
-```
-
-Identidad: el instance id leído de IMDSv2 (la NACL no lo filtra). Queda en la fila y en el log.
+- `ConsumidorEvaluaciones`: toma un mensaje de `evaluaciones`, lo evalúa con un **latido** que
+  renueva la invisibilidad cada 5 minutos (una evaluación puede pasar los 30 de la cola), y recién
+  después lo borra.
+- `EvaluarModelo.ejecutar` publica `en_curso` y siempre termina con un `ok` o un `error`:
+  1. Bajar `modelo.json` y `modelo.onnx` a un temporal; construir `OnnxMotor`.
+  2. `conjuntos.ultima_version(tipo_estudio)` (prefijos `vN/`), leer manifiesto y verdad, validar
+     consistencia. Si falla: `terminar_error`.
+  3. Por cada caso: `leer → decodificar → preprocesar → inferir → posprocesar`. Un caso ilegible
+     suma a `casos_con_error`.
+  4. `calcular_metricas(...)` y publicar **solo el agregado**: métricas, versión y hash del
+     conjunto. El resultado caso por caso nunca sale de la subred (regla 6 de la spec).
+- Identidad: el id de la tarea, del endpoint de metadatos de ECS (la NACL no lo filtra).
 
 ## 7. `ateneo_ml`: el contrato hecho código
 
@@ -368,95 +310,111 @@ fijos, más un test contra `modelo.onnx` real marcado `@slow` que solo corre si 
 
 ## 8. Frontend
 
-React + Vite + TypeScript, CSS propio.
+React + Vite + TypeScript, CSS propio, sin librerías.
+
+Tres vistas, una por público: la **portada** cuenta qué es Ateneo y abre las otras dos;
+**publicación** es la vista de quien sube modelos; **consulta** la de quien atiende pacientes. El
+único estado que comparten es el que ya vive en la API.
 
 ```
 src/
 ├── api/ cliente.ts · tipos.ts · modelos.ts · estudios.ts · inferencias.ts · trabajos.ts
+│   ├── s3.ts                   # subir un archivo con un presigned POST, con progreso (XHR)
+│   ├── configuracion.ts        # /config.json: dónde está la API y los clientes de Cognito
+│   └── sesion.ts               # login con Cognito: ingresar, crear cuenta, recibir los tokens, salir
 ├── hooks/
 │   ├── useModelos.ts           # publicados + disponibles; refresco
-│   ├── usePublicacion.ts       # publicar + polling del modelo cada 3 s hasta ok/error
-│   └── useInferencia.ts        # crear estudio → POST a S3 → encolar → polling del trabajo cada 1,5 s
-├── components/ SelectorModelo · TarjetaEvaluacion · PanelPublicar · CargadorImagen · EstadoTrabajo · ResultadoInferencia · EstadoApi
-└── pages/Laboratorio.tsx       # dos columnas; único estado compartido: modelo elegido
+│   ├── usePublicacion.ts       # subir el ONNX → publicar + polling del modelo cada 3 s
+│   ├── useInferencia.ts        # crear estudio → POST a S3 → encolar → polling del trabajo cada 1,5 s
+│   ├── useSalud.ts             # GET /api/health cada 10 s, para la barra y el pie
+│   ├── useSesion.ts            # la sesión de Cognito; re-renderiza al ingresar o salir
+│   └── useTema.ts              # claro/oscuro; sin elección manda prefers-color-scheme
+├── enrutador.tsx               # useRuta() + <Enlace>: History API, tres rutas, ~60 líneas
+├── components/
+│   ├── Marca · Navegacion · PieSitio · DiagramaFlujo · PideIngreso   # identidad, marco y login
+│   ├── SubirModelo · ListaDisponibles · CatalogoModelos · TarjetaEvaluacion
+│   └── SelectorModelo · ResumenMedida · CargadorImagen · EstadoTrabajo · ResultadoInferencia · EstadoApi
+├── pages/
+│   ├── Inicio.tsx              # "/"          portada: qué es, el recorrido, las dos puertas
+│   ├── Publicar.tsx            # "/publicar"  bucket → alta → evaluación en vivo → catálogo
+│   └── Consulta.tsx            # "/consulta"  modelo medido → estudio → predicción
+├── utilidades/ formato.ts · contrato.ts                     # lectura del modelo.json en el navegador
+└── estilos/ base.css · sitio.css · paneles.css              # tokens, sitio, paneles
 ```
 
 - Componentes sin `fetch`: reciben datos y callbacks. Los hooks usan `api/`. Cambiar la API es
   tocar `api/`.
 - Polling con `setInterval` dentro del hook, cancelado al terminar o al desmontar. Cuando exista
   algo mejor (SSE), cambia el hook, no los componentes.
-- Subida a S3 con el `presigned POST` tal cual (`FormData` con los campos + el archivo).
-- Rutas relativas (`/api/...`): en producción resuelven al ALB; en desarrollo, Vite hace proxy a
-  `localhost:8080`. El código no distingue entornos, igual que el `index.html` de la guía.
-- Sin router: una página. `react-router` entra sin tocar hooks; el backend ya devuelve
-  `index.html` para rutas del cliente.
+- Subida a S3 con el `presigned POST` tal cual (`FormData` con los campos + el archivo), en
+  `api/s3.ts` y con `XMLHttpRequest`: es el único que informa el progreso, y un ONNX pesa decenas
+  de MB. La usan las dos subidas, la del estudio y la del modelo.
+- **Dónde está la API lo dice `/config.json`.** En AWS lo escribe Terraform en el bucket web
+  (dirección de API Gateway y clientes de Cognito); en local no existe y las rutas quedan relativas
+  (`/api/...`, que Vite pasa a `localhost:8080`). El build no cambia entre entornos.
+- **Login** (`api/sesion.ts`): el recorrido de la clase, descrito en `terraform/README.md`.
+  `cliente.ts` manda el access token en cada pedido y, ante un `401`, descarta la sesión: la sección
+  vuelve a pedir el ingreso (`components/PideIngreso.tsx`). Crear cuenta deja elegir institución o
+  publicador; cada uno entra por su cliente de Cognito.
+- **Ruteo propio, no react-router.** `enrutador.tsx` es `useSyncExternalStore` sobre
+  `history.pushState` más un `<Enlace>` que respeta ctrl/cmd/click del medio. Son tres rutas fijas
+  y una dependencia menos; el bucket web devuelve `index.html` como documento de error (y `sitio.py`
+  en local), así que recargar `/consulta` funciona.
+- **Identidad visual**: la misma de los documentos del proyecto (verde clínico `#0E6B66`, Archivo
+  para títulos, Source Sans 3 para el cuerpo, IBM Plex Mono para los datos), en tokens de CSS con
+  tema claro y oscuro. Las fuentes vienen de Google Fonts con `display=swap` y una pila del sistema
+  detrás: si el navegador no las alcanza, el sitio sigue legible.
 
 ## 9. Configuración por servicio
 
 | Servicio | Variable | Uso |
 |----------|----------|-----|
-| backend | `DATABASE_URL` · `AWS_REGION` · `BUCKET_MODELOS` · `BUCKET_ESTUDIOS` · `INFERENCIA_URL` · `ORIGEN_WEB` | como en la guía |
-| backend | `WEB_DIR=/opt/ateneo/web` · `TIMEOUT_INFERENCIA_S=30` · `MAX_INTENTOS=3` · `INTERVALO_DESPACHO_S=1` · `MAX_BYTES_ESTUDIO=20971520` | nuevos, con default |
-| worker | `AWS_REGION` · `MODELOS_DIR=/mnt/modelos` · `BUCKET_MODELOS` (nuevo) · `CACHE_SESIONES=4` | caché EFS · LRU |
-| evaluador | `AWS_REGION` · `BUCKET_EVALUACION` · `BUCKET_MODELOS` · `DATABASE_URL` · `INTERVALO_SEGUNDOS=10` · `DIRECTORIO_TRABAJO=/opt/worker/tmp` | bucle · temporales |
-| todos (local) | `AWS_ENDPOINT_URL=http://localhost:9000` + credenciales de MinIO | boto3 lo lee solo; en AWS no se define |
+| api | `DATABASE_URL` (secreto) · `BUCKET_MODELOS` · `BUCKET_ESTUDIOS` · `COLA_INFERENCIAS_URL` · `COLA_EVALUACIONES_URL` · `COGNITO_USER_POOL_ID` · `COGNITO_CLIENT_IDS` · `ORIGEN_WEB` | encolar y validar tokens |
+| procesador | `DATABASE_URL` (secreto) · `COLA_RESULTADOS_URL` · `COLA_INFERENCIAS_URL` · buckets | aplicar resultados y reenviar |
+| worker | `COLA_INFERENCIAS_URL` · `COLA_RESULTADOS_URL` · `MODELOS_DIR=/mnt/modelos` · `CACHE_SESIONES=4` | caché EFS · LRU |
+| evaluador | `COLA_EVALUACIONES_URL` · `COLA_RESULTADOS_URL` · `BUCKET_EVALUACION` · `BUCKET_MODELOS` | evaluar y publicar |
+| todos (local) | `AWS_ENDPOINT_URL_S3=http://minio:9000` · `AWS_ENDPOINT_URL_SQS=http://sqs:9324` | boto3 los lee solo; en AWS no se definen |
 
-`infra/*.env.example` documenta cada una sin secretos.
+En AWS las escribe Terraform en cada definición de tarea (`terraform/ecs.tf`).
 
 ## 10. Desarrollo local
 
 ```
-docker compose up -d                     # postgres:16 :5432 · minio :9000 (consola :9001) · crea los 4 buckets
-python tools/migrar.py                   # aplica migraciones/ contra DATABASE_URL
-python tools/descargar_modelo.py         # baja el ONNX, escribe modelo.json, sube a MinIO (o a AWS)
-python tools/preparar_conjunto.py --hf hf-vision/chest-xray-pneumonia --por-clase 100 --salida ./tmp/torax-rx/v1
-python tools/subir_conjunto.py ./tmp/torax-rx/v1
-(cd backend  && uvicorn app.main:app --port 8080 --reload)
-uvicorn worker.main:app --port 8081 --reload     # INFERENCIA_URL=http://localhost:8081 · MODELOS_DIR=./tmp/modelos
-python -m evaluador.main
-(cd frontend && npm run dev)                     # http://localhost:5173
+docker compose up -d --build      # db · minio · sqs (ElasticMQ) · migraciones · api · procesador · worker · evaluador
 ```
 
-- Los tres servicios Python corren en el host: así el `presigned POST` apunta a `localhost:9000` y
-  el navegador lo alcanza. MinIO acepta CORS `*` por defecto.
-- Los mismos scripts sirven contra AWS desde CloudShell: solo cambia `AWS_ENDPOINT_URL` (ausente).
-- **Lo normal es correr todo con Docker** (`docker compose up -d --build`), que reproduce la topología: Postgres hace de RDS, MinIO de S3, y el DNS de Docker hace de ALB interno. Ver el README.
+Reproduce la topología de AWS: Postgres hace de RDS, MinIO de S3 y ElasticMQ de SQS, con las mismas
+tres colas y sus colas de fallidos (`docker/elasticmq.conf`). El sitio lo sirve la api en
+<http://localhost:8080>, sin login. Ver el README.
 
 ## 11. Pruebas
 
 | Nivel | Qué | Con qué |
 |-------|-----|---------|
-| Dominio | `marcar_fallido` (3 intentos), `republicar` (409), `verificar_compatible`, validación de contrato | pytest, sin IO |
-| Casos de uso | orquestación con fakes en memoria; despachador con un `ClienteInferencia` que falla N veces | pytest |
-| `ateneo_ml` | preprocesamiento (NHWC/NCHW, gris replicado), posprocesamiento, métricas a mano; motor con ONNX de una capa | pytest + onnxruntime |
-| Adaptadores | S3 contra `moto`; repositorios y `tomar_pendiente` concurrente contra Postgres en Docker | pytest + moto + docker |
-| API | routers con casos de uso falsos (`dependency_overrides`); fallback a `index.html` | `TestClient` |
-| Extremo a extremo | publicar + evaluar + inferir contra el compose local | a mano, con el README |
-| Arquitectura | capas (`import-linter`); `contrato.py` idéntico en backend y `ateneo_ml` | CI |
+| Dominio | `republicar` (409), `verificar_compatible`, validación de contrato | pytest, sin IO |
+| Casos de uso | orquestación con fakes en memoria; encolar con la cola caída; reenviar y vencer | pytest |
+| Procesador | aplicar cada resultado una sola vez; descartar lo ilegible; no borrar si la base falla | pytest |
+| Worker y evaluador | qué publican y cuándo borran el mensaje; el latido del evaluador | pytest, sin SQS |
+| `ateneo_ml` | preprocesamiento, posprocesamiento, métricas a mano; motor con un ONNX de una capa | pytest + onnxruntime |
+| Adaptadores | SQS con el `Stubber` de botocore; tokens con una clave RSA propia | pytest |
+| API | routers con casos de uso falsos (`dependency_overrides`); 401 sin token | `TestClient` |
+| Infraestructura | la arquitectura de «Ateneo en AWS 2.0» contra un AWS simulado | `terraform test` |
 
-## 12. Despliegue: qué zip lleva qué
+## 12. Despliegue
 
-| Artefacto | Contenido | Quién lo baja | Cómo se aplica |
-|-----------|-----------|---------------|----------------|
-| `backend/backend-latest.zip` | `backend/app/`, `backend/requirements.txt` | user data de `lt-app` | `refrescar.sh asg-app` |
-| `worker/worker-latest.zip` | `worker/`, `evaluador/`, `ateneo_ml/` | user data de `lt-worker` y de `lt-eval` | `refrescar.sh asg-inf` · terminar y `run-instances` de `eval-1` |
-| `config/*.env` | variables de §9 | user data de cada capa | mismo reemplazo |
-| `s3://ateneo-web/` | build de Vite | user data de `lt-app` (`aws s3 sync` al arrancar) | `refrescar.sh asg-app` (sin CDN, las instancias tienen la copia) |
-| `migraciones/*.sql` | esquema | `psql` desde una instancia app | antes del backend que lo necesita |
-
-Orden del primer despliegue: migraciones → backend → worker → frontend (refresca app de nuevo) →
-modelo a S3 → conjunto a S3 → lanzar `eval-1` → apretar **Publicar**.
+`terraform apply` hace todo (ver `terraform/README.md`): empaqueta el código y calcula su hash, y
+una instancia construye las dos imágenes, las sube a ECR con ese hash como etiqueta y sube el sitio
+al bucket web. ECS reemplaza las tareas de a poco. Un cambio de código produce otro hash; sin
+cambios, el plan sale vacío.
 
 ## 13. Decisiones que este diseño deja abiertas a propósito
 
 | Evolución | Qué cambia | Qué no cambia |
 |-----------|------------|---------------|
-| Cola SQS | `ColaTrabajos` y `ClienteInferencia` pasan a SQS; el worker consume en vez de escuchar | Casos de uso, dominio, `ateneo_ml`, tabla `trabajo` |
-| El worker escribe el resultado (como sugiere la guía) | Un adaptador de `RepositorioTrabajos` en el worker con `insert … on conflict`; `DespacharTrabajo` deja de guardar | Todo lo demás |
-| Subida del ONNX desde la web | `POST /api/modelos` con URL prefirmada + `PublicarModelo` al confirmar | Evaluador, contrato, `ateneo_ml` |
-| Historial de evaluaciones | Tabla `evaluacion` (modelo, conjunto, versión, métricas); la fila del modelo apunta a la vigente | API pública, UI |
-| Juntas de varios modelos | `EncolarInferencia` crea N trabajos; un caso de uso `Consensuar` agrega | Worker, evaluador |
+| Matriz de permisos por rol | Cada router pide los grupos que admite; `usuario_actual` ya trae los grupos | Casos de uso, login |
+| Organizaciones y créditos | Tablas nuevas; `EncolarInferencia` reserva y el procesador cobra o libera | Worker, evaluador, colas |
+| Juntas de varios modelos | `EncolarInferencia` crea N trabajos; el procesador calcula el consenso al llegar el último | Worker, evaluador |
+| Carga de conjuntos desde la app | Un mensaje `ingerir_conjunto` en `evaluaciones` | Evaluador (otro caso de uso), procesador |
+| Historial de evaluaciones | Tabla `evaluacion`; la fila del modelo apunta a la vigente | API pública, UI |
 | DICOM | Un `DecodificadorImagen` más | Preprocesamiento, motor, métricas |
 | Segmentación | Un posprocesador y un calculador de métricas por `tarea` | Motor, worker, evaluador |
-| Autenticación | Implementar `usuario_actual` | Routers, casos de uso |
-| CloudFront (cuando se pueda) | Sacar el `mount` del sitio; `ORIGEN_WEB` pasa a ser el dominio de CloudFront | API, despachador, todo lo demás |

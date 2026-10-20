@@ -32,7 +32,7 @@ def main() -> int:
     conjunto = a.conjunto or base.parent.name
     version = a.version or base.name
     s3 = boto3.client("s3", config=Config(
-        s3={"addressing_style": "path" if os.environ.get("AWS_ENDPOINT_URL") else "auto"}))
+        s3={"addressing_style": "path" if os.environ.get("AWS_ENDPOINT_URL_S3") or os.environ.get("AWS_ENDPOINT_URL") else "auto"}))
 
     n = 0
     for archivo in sorted(base.rglob("*")):

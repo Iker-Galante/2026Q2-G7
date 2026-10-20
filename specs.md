@@ -1,10 +1,15 @@
 # Ateneo · Especificación del pre-MVP
 
 > Estado: borrador 3 · 2026-09-07 · el código de este repo implementa lo que dice acá
-> Alcance: el paso anterior al MVP. Una sola pantalla que demuestra los dos caminos de la
+> Alcance: el paso anterior al MVP. Una portada y dos secciones que demuestran los dos caminos de la
 > arquitectura —inferencia (app → tabla `trabajo` → ALB interno → worker) y evaluación (subred
 > aislada → dataset reservado → métricas en la base)— con un modelo ONNX bajado de internet que
 > subimos a mano a S3, y un dataset público que hace de "conjunto reservado".
+
+> **Entrega 3 (rama `entrega3`).** Lo que cambia es el transporte, no el producto: la tabla
+> `trabajo` deja de ser la cola (D4, D5) y los pedidos viajan por SQS (`inferencias`,
+> `evaluaciones`); worker y evaluador ya no escriben en la base ni se los llama por HTTP, y un
+> procesador aplica los resultados (D6). Hay login con Cognito. Ver [architecture.md](architecture.md).
 
 Documentos relacionados: [architecture.md](architecture.md) (diseño de la aplicación) ·
 `ateneo-en-aws.html` y `ateneo-paso-a-paso.html` (infraestructura, fuera del repo por ahora).
@@ -22,9 +27,9 @@ soporta el producto:
 2. **Inferir una imagen.** Un usuario sube una imagen médica desde el navegador, el backend encola
    un trabajo, un worker lo procesa y la pantalla muestra la predicción.
 
-**No es un MVP.** No hay usuarios, ni subida de modelos desde la web (el archivo ONNX se sube a
-mano a S3 y el botón simula el resto), ni juntas de varios modelos, ni facturación. Todo eso
-queda en §13 como evolución.
+**No es un MVP.** No hay usuarios ni permisos, ni juntas de varios modelos, ni facturación. Lo
+que sí hay, de punta a punta, es el camino del publicador —subir el ONNX y su contrato desde la
+pantalla— y el del usuario clínico. El resto queda en §13 como evolución.
 
 ## 2. Decisiones tomadas
 
@@ -32,7 +37,7 @@ Resueltas en la conversación del 2026-09-07. Las que siguen abiertas están en 
 
 | # | Tema | Decisión |
 |---|------|----------|
-| D1 | Qué simula el botón | **"Publicar modelo"**: toma un modelo ya subido a mano al bucket de modelos, lo da de alta en el catálogo con `estado_evaluacion = pendiente`, y `eval-1` lo evalúa. Al terminar, la fila del modelo tiene `accuracy` y el resto de las métricas. |
+| D1 | Cómo entra un modelo | **Lo sube el publicador desde la pantalla.** El `.onnx` va del navegador directo al bucket con un `presigned POST` (igual que la imagen del estudio, D8: un modelo pesa decenas de MB y no tiene por qué atravesar la API) y el contrato viaja en el pedido de alta: la API lo valida, confirma que el archivo llegó, escribe el `modelo.json` al lado y deja la fila en `estado_evaluacion = pendiente` para que `eval-1` la tome. Un modelo que ya esté en el bucket —subido a mano por el operador— se publica igual, sin contrato en el pedido. |
 | D2 | Modelo | **ONNX listo para bajar**, sin entrenar nada: `mediscan_pneumonia.onnx` de [Rhishamah/mediscan-pneumonia](https://huggingface.co/Rhishamah/mediscan-pneumonia). 16 MB, radiografía de tórax, binario (NORMAL / PNEUMONIA). **Un modelo evalúa una sola cosa**: este es de `torax-rx`. Un modelo de cerebro sería otro `tipo_estudio` (`cerebro-mri`) con su propio conjunto reservado, sin tocar nada del código. Contrato verificado, ver §7. |
 | D3 | Dataset | **Chest X-Ray Images (Pneumonia)**, el mismo de Kaggle pero servido por Hugging Face como [`hf-vision/chest-xray-pneumonia`](https://huggingface.co/datasets/hf-vision/chest-xray-pneumonia): se baja por API pública, **sin cuenta de Kaggle**. Del split de test (624 imágenes) se toman **100 por clase = 200 casos**. Tipo de estudio: `torax-rx`. |
 | D4 | Cómo dispara el botón a `eval-1` | Nadie puede iniciar conexiones hacia `eval-1`, así que **polling a la base**: el evaluador toma modelos en `pendiente` con `FOR UPDATE SKIP LOCKED` cada 10 s. `eval-1` tiene que estar encendida durante la demo. |
@@ -50,24 +55,29 @@ Resueltas en la conversación del 2026-09-07. Las que siguen abiertas están en 
   Elegí que no lo haga porque con el despachador en el backend el worker queda sin estado y sin
   dependencia de la base. Si prefieren seguir la guía al pie, es cambiar un adaptador (§13 de
   architecture.md); la infraestructura ya lo permite (`sg-data` acepta 5432 desde `sg-worker`).
+- **Una versión no se pisa.** `POST /api/modelos/subidas` responde `409` si el prefijo
+  `modelos/<nombre>/<version>/` ya tiene algo. Es la misma regla que rige los conjuntos (§4): lo
+  que se midió una vez no cambia de contenido a espaldas de su accuracy. Para corregir un modelo
+  se sube otra versión.
 - **Volver a publicar el mismo modelo.** El botón sobre un modelo ya evaluado lo vuelve a poner en
-  `pendiente` y se re-evalúa (útil para repetir la demo). Si está `pendiente` o `en_curso`, el
-  botón responde `409`.
+  `pendiente` y se re-evalúa, sin volver a subir el archivo (útil para repetir la demo). Si está
+  `pendiente` o `en_curso`, el botón responde `409`.
 - **Inferir con un modelo sin evaluar.** Se permite: la demo de inferencia no depende de que
   `eval-1` esté encendida. La tarjeta muestra "Sin evaluar" en lugar de la accuracy.
 - **Placeholders de la guía.** La autoprueba de `eval-1` (§9.2) ya mira `torax-rx/v1/`, que es
   justo donde va el conjunto real: los dos archivos de mentira se reemplazan por el conjunto y las
   cinco comprobaciones siguen sirviendo tal cual.
-- **Agregar un segundo modelo** (de otro tipo de estudio, o del mismo) es subir otro prefijo a S3
-  con su `modelo.json` y apretar «Publicar». Nada de código cambia. Con dos modelos del mismo
-  `tipo_estudio` se ve la comparación de accuracy contra el mismo conjunto, que es la tesis del
-  producto.
+- **Agregar un segundo modelo** (de otro tipo de estudio, o del mismo) es subirlo desde la
+  pantalla con su contrato. Nada de código cambia. Con dos modelos del mismo `tipo_estudio` se ve
+  la comparación de accuracy contra el mismo conjunto, que es la tesis del producto.
 
 ## 3. Actores
 
-- **Operador** (nosotros): baja el ONNX, arma `modelo.json`, sube los dos a S3; prepara y sube el
-  conjunto; enciende `eval-1`.
-- **Usuario de la demo**: usa la pantalla. Sin cuenta.
+- **Operador** (nosotros): prepara y sube el conjunto reservado, enciende `eval-1`. El modelo ya
+  no lo sube: lo sube el publicador desde la pantalla (queda el camino a mano para sembrar el
+  bucket sin navegador).
+- **Publicador**: sube un modelo con su contrato en `/publicar` y mira su evaluación. Sin cuenta.
+- **Usuario clínico**: elige un modelo medido y consulta un estudio en `/consulta`. Sin cuenta.
 - **Sistemas**: backend con despachador (capa app), worker de inferencia (capa inferencia),
   evaluador (`eval-1`).
 
@@ -94,8 +104,11 @@ Reglas:
 
 ### 5.1 Preparación (una vez, por el operador)
 
-1. `tools/descargar_modelo.py`: baja el ONNX, escribe el `modelo.json` de §7 al lado y sube los
-   dos a `s3://ateneo-modelos/modelos/torax-rx-neumonia/1.0.0/`. Es la "subida a mano".
+1. `tools/descargar_modelo.py --solo-descargar`: baja el ONNX y escribe el `modelo.json` de §7 al
+   lado, en `./tmp/modelo`. **Esos son los dos archivos que el publicador sube desde `/publicar`.**
+   Sin `--solo-descargar` la herramienta además los sube a
+   `s3://ateneo-modelos/modelos/torax-rx-neumonia/1.0.0/`: es el atajo para sembrar el bucket sin
+   pasar por el navegador, no el camino del producto.
 2. `tools/verificar_modelo.py`: carga el ONNX con el contrato (los tensores tienen que existir con
    esas formas) y lo corre sobre casos etiquetados para ver la accuracy. Sirve para no descubrir
    un contrato mal escrito recién en la evaluación.
@@ -106,13 +119,16 @@ Reglas:
    `tools/subir_conjunto.py` para conjuntos chicos y para el desarrollo local.
 5. Lanzar `eval-1` desde `lt-eval` con el user data del evaluador (§9.5 de la guía).
 
-### 5.2 Publicar un modelo (simulado) y evaluarlo
+### 5.2 Subir un modelo, publicarlo y evaluarlo
 
 ```
 Navegador              Backend (app)          S3 modelos        Postgres          eval-1 (evaluador)      S3 evaluación
-   │ GET /api/modelos/disponibles ─►│ list modelos/*/*/ ─►│                  │                          │
-   │ ◄── [{nombre, version, publicado}]                   │                  │                          │
-   │ POST /api/modelos/publicar ───►│ GET modelo.json ───►│                  │                          │
+   │ POST /api/modelos/subidas ────►│ list prefijo (409 si existe)            │                          │
+   │ ◄── 201 {prefix, subida}       │                     │                  │                          │
+   │ POST modelo.onnx (form prefirmado) ──────────────────►│                  │                          │
+   │ POST /api/modelos/publicar ───►│ valida contrato     │                  │                          │
+   │      {nombre, version, contrato}│ head modelo.onnx ─►│                  │                          │
+   │                                │ put modelo.json ───►│                  │                          │
    │                                │ upsert modelo pendiente ──────────────►│                          │
    │ ◄── 202 {modelo_id}            │                     │                  │   poll 10 s              │
    │                                │                     │                  │◄─ SELECT … SKIP LOCKED ──│
@@ -124,11 +140,15 @@ Navegador              Backend (app)          S3 modelos        Postgres        
    │ ◄── {estado_evaluacion, accuracy, metricas}                             │                          │
 ```
 
-1. La pantalla lista los modelos que hay en el bucket (prefijos con `modelo.json`) y marca cuáles
-   ya están publicados.
-2. El usuario elige uno y aprieta **Publicar modelo**. El backend lee `modelo.json` de S3, valida
-   el contrato (§7) e inserta o actualiza la fila con `estado_evaluacion = pendiente`, borrando
-   métricas anteriores. Responde `202`.
+1. El publicador elige el `.onnx` y su contrato (o lo escribe en la pantalla, que trae una
+   plantilla). `POST /api/modelos/subidas` reserva `modelos/<nombre>/<version>/` —`409` si ese
+   prefijo ya tiene algo: una versión publicada no se pisa— y devuelve el `presigned POST`. El
+   navegador manda el archivo directo a S3.
+2. **Subir y publicar** termina con `POST /api/modelos/publicar` llevando el contrato. El backend
+   lo valida (§7), confirma con `head_object` que el ONNX llegó, escribe el `modelo.json` al lado
+   e inserta o actualiza la fila con `estado_evaluacion = pendiente`, borrando métricas anteriores.
+   Responde `202`. Sobre un modelo que ya está en el bucket, el mismo pedido sin `contrato` lo
+   vuelve a encolar leyendo el `modelo.json` que ya existe.
 3. El evaluador en `eval-1` toma la fila, baja el modelo, lee manifiesto, verdad y casos de la
    versión más reciente de `torax-rx/` por el endpoint de la VPC, infiere cada caso con
    `ateneo_ml`, calcula métricas y actualiza la fila: `estado_evaluacion = ok`, `accuracy`,
@@ -183,7 +203,8 @@ devuelve `index.html` (rutas del lado del cliente).
 | `GET /health` | — | `{"ok": true}` (sin base; lo usa el ALB) | — |
 | `GET /api/health` | — | `{"ok": true, "instancia": "ip-10-0-10-23"}` | — |
 | `GET /api/modelos/disponibles` | — | `[{nombre, version, tipo_estudio, publicado: bool, modelo_id?}]` (lista prefijos `modelos/*/*/modelo.json` en S3) | — |
-| `POST /api/modelos/publicar` | `{nombre, version}` | `202 Modelo` (estado `pendiente`) | `404` no hay `modelo.json` en S3 · `422` contrato inválido · `409` ya está `pendiente` o `en_curso` |
+| `POST /api/modelos/subidas` | `{nombre, version, tamano_bytes}` | `201 {prefix, subida: {url, campos}}` | `409` ese prefijo ya tiene algo · `422` tamaño fuera de rango (máx. 512 MB) |
+| `POST /api/modelos/publicar` | `{nombre, version, contrato?}` | `202 Modelo` (estado `pendiente`) | `404` no llegó el `modelo.onnx` (o no hay `modelo.json` en S3, sin `contrato`) · `422` contrato inválido · `409` ya está `pendiente` o `en_curso` |
 | `GET /api/modelos` | — | `[Modelo]` publicados, orden `creado desc` | — |
 | `GET /api/modelos/{id}` | — | `Modelo` | `404` |
 | `POST /api/estudios` | `{tipo_estudio, nombre_archivo, content_type, tamano_bytes}` | `201 {estudio_id, subida: {url, campos}}` | `422` MIME o tamaño no permitido |
@@ -390,26 +411,44 @@ de los casos falla, la evaluación termina en `error`.
 | Rutas del cliente | `404` fuera de `/api` → `index.html` (guía §10). |
 | Sin autenticación | Punto de extensión `Depends(usuario_actual)`, hoy anónimo. |
 
-## 12. Pantalla
+## 12. Pantallas
 
-Una sola página, **Laboratorio**, en dos columnas, servida en `http://<alb>/`.
+Tres vistas servidas en `http://<alb>/`, con ruteo del lado del cliente (`/`, `/publicar`,
+`/consulta`; un `404` fuera de `/api` devuelve `index.html`). Una por público: la portada explica,
+publicación es de quien sube modelos, consulta es de quien atiende.
 
-**Columna izquierda · Modelo**
-- Selector de modelo publicado (nombre, versión, tipo de estudio, etiquetas).
-- Tarjeta de evaluación: `accuracy` grande, precisión y sensibilidad macro, casos, conjunto y
-  versión, fecha, hash corto. Estados: "Sin evaluar", "Evaluando…" (spinner y polling), "Error:
-  …".
-- Panel **Publicar modelo**: select con los modelos disponibles en el bucket (los ya publicados
-  aparecen marcados) y el botón. Al apretarlo, el modelo aparece en el selector con "Evaluando…".
+**Portada (`/`)** — qué es Ateneo, el recorrido de un modelo (publicar → medir aislado → catálogo →
+consultar), las dos puertas y lo que el pre-MVP todavía no hace. Muestra en vivo cuántos modelos
+hay publicados, cuántos evaluados, la mejor accuracy y cuántos esperan en el bucket.
 
-**Columna derecha · Estudio**
-- Zona de arrastre / selector de archivo con vista previa local.
-- Botón **Inferir** (habilitado con modelo elegido e imagen cargada).
-- Estado del trabajo: "Subiendo" → "En cola" → "Procesando" → resultado. Resultado: etiqueta
-  predicha destacada, barras de probabilidad por clase, duración, worker e intentos.
-- Errores legibles: "El worker no respondió tras 3 intentos", "Tipo de estudio distinto".
+**Publicación (`/publicar`)**
+- **Subir un modelo**: zona de arrastre para el `.onnx` y su `modelo.json` (los dos de una, o el
+  ONNX y el contrato escrito en el editor, que trae plantilla). Debajo, lo leído del contrato
+  —tipo de estudio, tarea, etiquetas— y el destino `modelos/<nombre>/<version>/`, con aviso si esa
+  versión ya existe. **Subir y publicar** muestra el progreso del archivo y después «dando de
+  alta». Al lado, qué valida el alta.
+- **En el bucket**: una fila por prefijo con `modelo.json` —nombre, versión, tipo de estudio, si ya
+  está en el catálogo— y su botón **Publicar** / **Volver a publicar**, que re-evalúa sin volver a
+  subir nada.
+- **La evaluación**: tarjeta del modelo elegido con la `accuracy` grande, métricas secundarias,
+  matriz de confusión, casos, conjunto y versión, hash del manifiesto, evaluador y fecha. Estados:
+  «Sin evaluar», «Evaluando…» (spinner y polling cada 3 s), «La evaluación falló: …». Al lado, qué
+  valida el alta y qué hace volver a publicar.
+- **El catálogo**: tabla de los publicados (modelo, tipo de estudio, evaluación, accuracy, casos,
+  conjunto, fecha) con la mejor accuracy de cada tipo marcada. Elegir una fila la muestra arriba.
 
-**Pie**: `/api/health` → instancia que atendió, para ver al ALB alternar.
+**Consulta (`/consulta`)**
+- **El modelo**: tarjetas de los modelos publicados con la accuracy a la vista; debajo, contra qué
+  se midió (sensibilidad, especificidad, casos, conjunto) y la evaluación completa desplegable.
+- **El estudio**: zona de arrastre / selector de archivo con vista previa local y botón
+  **Consultar**, habilitado con modelo elegido e imagen cargada.
+- **El resultado**: «Subiendo» → «En cola» → «Procesando» → etiqueta predicha destacada, barras de
+  probabilidad por clase, duración, worker e intentos. Cierra con el aviso de que es orientativo y
+  no reemplaza el criterio clínico.
+- Errores legibles: «El worker no respondió tras 3 intentos», «Tipo de estudio distinto».
+
+**Barra y pie**: `/api/health` con la instancia que atendió (para ver al ALB alternar) y
+alternador de tema claro / oscuro.
 
 ## 13. Criterios de aceptación
 
@@ -419,13 +458,15 @@ especificidad 0,99, AUC 0,995, 0 casos ilegibles); inferencias de 59 a 292 ms; y
 apagado, el trabajo hace 3 intentos y termina en `error` sin colgar nada.
 
 
-1. Con el ONNX y su `modelo.json` en S3, **Publicar modelo** lo deja en `pendiente` y, con
-   `eval-1` encendida, pasa a `ok` con `accuracy` en menos de 3 min para 200 casos.
+1. **Subir y publicar** con el `.onnx` y su contrato deja el objeto en
+   `modelos/<nombre>/<version>/` —los dos archivos, comprobable con `aws s3 ls`— y la fila en
+   `pendiente`; con `eval-1` encendida pasa a `ok` con `accuracy` en menos de 3 min para 200 casos.
+   Volver a subir esa misma versión responde `409`.
 2. La fila del modelo dice contra qué se midió: `conjunto`, `conjunto_version`, `manifiesto.hash`
    y `evaluador_id` poblados.
 3. Desde CloudShell, `aws s3api get-object` sobre un caso del conjunto da `AccessDenied` mientras
    la evaluación anterior sí terminó (prueba 6 de la demo).
-4. **Inferir** con una imagen de la carpeta `Testing` devuelve `202` de inmediato y el trabajo
+4. **Consultar** con una imagen de la carpeta `Testing` devuelve `202` de inmediato y el trabajo
    pasa a `ok` en menos de 5 s, con `worker_id` poblado.
 5. Repetir seis veces muestra al menos dos `worker_id` distintos con `asg-inf` en 2 instancias
    (prueba 4).

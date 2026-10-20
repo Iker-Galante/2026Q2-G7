@@ -1,5 +1,8 @@
-# Backend + sitio estático, igual que en la capa app de AWS:
-# el frontend compilado queda en /opt/ateneo/web y FastAPI lo sirve en "/".
+# Imagen `backend`: la API (servicio api) y el procesador (servicio procesador, con otro comando).
+# Lleva FastAPI, el driver de PostgreSQL y las migraciones; no lleva ONNX Runtime.
+#
+# La etapa `frontend` compila el sitio. En AWS el constructor la usa para subir el sitio al bucket
+# web (el login de Cognito vuelve a ese sitio); en local, el backend lo sirve en "/".
 
 FROM node:20-alpine AS frontend
 WORKDIR /src
@@ -14,6 +17,7 @@ WORKDIR /opt/ateneo/backend
 COPY backend/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/app ./app
+COPY migraciones /opt/ateneo/migraciones
 COPY --from=frontend /src/dist /opt/ateneo/web
 EXPOSE 8080
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "2"]

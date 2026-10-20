@@ -6,11 +6,11 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
 
-from app.aplicacion.puertos import PeticionInferencia, RefModeloEnBucket, SubidaFirmada
+from app.aplicacion.puertos import RefModeloEnBucket, SubidaFirmada
 from app.dominio.errores import NoEncontrado, ServicioNoDisponible
 from app.dominio.estudio import Estudio, ObjetoAlmacenado
 from app.dominio.modelo import Modelo
-from app.dominio.trabajo import ResultadoInferencia, Trabajo
+from app.dominio.trabajo import Trabajo
 
 
 class RelojFijo:
@@ -57,8 +57,6 @@ class RepoEstudiosMemoria:
 
 
 class RepoTrabajosMemoria:
-    """Repositorio y cola, como el de Postgres."""
-
     def __init__(self):
         self.datos: dict[UUID, Trabajo] = {}
 
@@ -69,18 +67,6 @@ class RepoTrabajosMemoria:
         if id not in self.datos:
             raise NoEncontrado(f"no existe el trabajo {id}")
         return self.datos[id]
-
-    def tomar_pendiente(self, max_intentos: int) -> Trabajo | None:
-        candidatos = sorted((t for t in self.datos.values() if t.estado == "pendiente" and t.intentos < max_intentos),
-                            key=lambda t: t.actualizado)
-        if not candidatos:
-            return None
-        t = candidatos[0]
-        t.estado, t.intentos = "en_curso", t.intentos + 1
-        return t
-
-    def reencolar_huerfanos(self, minutos: int) -> int:
-        return 0
 
 
 class AlmacenMemoria:
@@ -97,8 +83,11 @@ class AlmacenMemoria:
 
 
 class CatalogoMemoria:
-    def __init__(self, contratos: dict[str, dict[str, Any]] | None = None):
+    def __init__(self, contratos: dict[str, dict[str, Any]] | None = None,
+                 onnx: set[str] | None = None):
         self.contratos = contratos or {}     # prefix → modelo.json
+        self.onnx = onnx or set()            # prefijos que ya tienen su modelo.onnx
+        self.firmadas: list[str] = []        # prefijos para los que se firmó una subida
 
     def listar(self):
         refs = []
@@ -112,16 +101,31 @@ class CatalogoMemoria:
             raise NoEncontrado(prefix)
         return self.contratos[prefix]
 
+    def existe(self, prefix) -> bool:
+        return prefix in self.contratos or prefix in self.onnx
 
-class ClienteInferenciaFalso:
-    def __init__(self, fallos_antes_de_responder: int = 0, error=ServicioNoDisponible("worker caído")):
-        self.fallos = fallos_antes_de_responder
-        self.error = error
-        self.peticiones: list[PeticionInferencia] = []
+    def firmar_subida(self, prefix, max_bytes) -> SubidaFirmada:
+        self.firmadas.append(prefix)
+        return SubidaFirmada(url="http://s3.local/modelos",
+                             campos={"key": f"{prefix}modelo.onnx", "Content-Type": "application/octet-stream"})
 
-    def inferir(self, p: PeticionInferencia) -> ResultadoInferencia:
-        self.peticiones.append(p)
-        if self.fallos > 0:
-            self.fallos -= 1
-            raise self.error
-        return ResultadoInferencia("PNEUMONIA", {"NORMAL": 0.1, "PNEUMONIA": 0.9}, "worker-1", 120)
+    def describir_modelo(self, prefix) -> ObjetoAlmacenado:
+        if prefix not in self.onnx:
+            raise NoEncontrado(f"{prefix}modelo.onnx")
+        return ObjetoAlmacenado(tamano_bytes=16_000_000, etag="etag")
+
+    def escribir_contrato(self, prefix, contrato) -> None:
+        self.contratos[prefix] = contrato
+
+
+class ColaFalsa:
+    """ColaInferencias y ColaEvaluaciones: guarda lo enviado, o falla como SQS caído."""
+
+    def __init__(self, caida: bool = False):
+        self.caida = caida
+        self.enviados: list[Any] = []
+
+    def enviar(self, p) -> None:
+        if self.caida:
+            raise ServicioNoDisponible("SQS no contesta")
+        self.enviados.append(p)

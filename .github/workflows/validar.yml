@@ -1,0 +1,48 @@
+name: Validar
+
+# El único que corre solo, en cada push y en cada PR: no toca AWS, así que no depende de las
+# credenciales del lab (vencen cada sesión). Es el chequeo que tiene que estar siempre verde.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validar:
+    name: Formato, validación y pruebas
+    runs-on: ubuntu-latest
+
+    env:
+      TF_IN_AUTOMATION: true
+      TF_INPUT: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # La misma versión que instala scripts/tf.sh. Tiene que ser >= la que se use en una máquina: Terraform
+      # se niega a leer un estado escrito por una versión más nueva que la suya.
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.16.5
+          terraform_wrapper: false
+
+      # Desde la raíz y recursivo, igual que el workflow «Terraform Format» de la plantilla de la
+      # cátedra: si esto falla acá, falla allá.
+      - name: Formato
+        run: terraform fmt -check -recursive
+
+      - name: Init sin backend
+        run: terraform init -backend=false
+        working-directory: terraform/organization
+
+      - name: Validate
+        run: terraform validate
+        working-directory: terraform/organization
+
+      # La arquitectura contra un AWS simulado (mock_provider): cinco bloques run, sin cuenta.
+      - name: Pruebas
+        run: terraform test
+        working-directory: terraform/organization

@@ -9,12 +9,14 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from ..dominio.errores import (
-    Conflicto, EntradaInvalida, ErrorDominio, FalloDefinitivo, NoEncontrado, ServicioNoDisponible,
+    Conflicto, EntradaInvalida, ErrorDominio, FalloDefinitivo, NoAutenticado, NoEncontrado,
+    ServicioNoDisponible,
 )
 
 log = logging.getLogger(__name__)
 
 CODIGOS_HTTP: dict[type[ErrorDominio], int] = {
+    NoAutenticado: 401,
     NoEncontrado: 404,
     Conflicto: 409,
     EntradaInvalida: 422,

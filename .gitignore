@@ -21,3 +21,9 @@ datos/
 
 # configuracion local de buckets (se copia de infra/entorno.example.sh)
 infra/entorno.sh
+
+# trabajo local con Claude: notas, borradores y conversaciones (no se versiona)
+_claude/
+Claude outputs/
+.claude/settings.local.json
+CLAUDE.md

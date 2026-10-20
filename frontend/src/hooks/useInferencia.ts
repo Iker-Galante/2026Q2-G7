@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { mensajeDeError } from "../api/cliente";
-import { crear as crearEstudio, subirArchivoAS3 } from "../api/estudios";
+import { crear as crearEstudio } from "../api/estudios";
 import { encolar } from "../api/inferencias";
+import { subirArchivoAS3 } from "../api/s3";
 import { obtener as obtenerTrabajo } from "../api/trabajos";
 import type { Modelo, Trabajo } from "../api/tipos";
 

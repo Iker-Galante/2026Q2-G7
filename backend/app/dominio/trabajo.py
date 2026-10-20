@@ -47,24 +47,3 @@ class Trabajo:
             creado=ahora,
             actualizado=ahora,
         )
-
-    def marcar_ok(self, r: ResultadoInferencia, ahora: datetime) -> None:
-        self.estado = "ok"
-        self.resultado = r.como_dict()
-        self.worker_id = r.worker_id
-        self.duracion_ms = r.duracion_ms
-        self.error = None
-        self.actualizado = ahora
-
-    def marcar_fallido(self, motivo: str, ahora: datetime, max_intentos: int, definitivo: bool = False) -> None:
-        """Vuelve a `pendiente` para reintentar, o pasa a `error` si se agotaron los intentos.
-
-        `intentos` ya fue incrementado al tomar el trabajo de la cola.
-        """
-        self.actualizado = ahora
-        if definitivo or self.intentos >= max_intentos:
-            self.estado = "error"
-            self.error = motivo if definitivo else f"{motivo} (tras {self.intentos} intentos)"
-        else:
-            self.estado = "pendiente"
-            self.error = motivo

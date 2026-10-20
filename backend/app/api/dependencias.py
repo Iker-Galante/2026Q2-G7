@@ -1,25 +1,27 @@
-"""Composition root: el único módulo que instancia adaptadores.
+"""Composition root de la API: el único módulo que instancia adaptadores para ella.
 
 `Contenedor` arma el grafo una vez por proceso; las funciones `Depends` de abajo
 son lo que reciben los routers. Los tests reemplazan estas funciones con
-`app.dependency_overrides`.
+`app.dependency_overrides`. El procesador tiene su propio armado (procesador.py).
 """
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 
-import boto3
-from botocore.config import Config as BotoConfig
-from fastapi import Request
+from fastapi import Depends, Request
 
 from ..aplicacion.casos_uso.estudios import CrearEstudio
-from ..aplicacion.casos_uso.inferencias import ConsultarTrabajo, DespacharTrabajo, EncolarInferencia
-from ..aplicacion.casos_uso.modelos import ConsultarModelo, ListarModelos, ListarModelosDisponibles, PublicarModelo
-from ..aplicacion.despachador import Despachador
+from ..aplicacion.casos_uso.inferencias import ConsultarTrabajo, EncolarInferencia
+from ..aplicacion.casos_uso.modelos import (
+    ConsultarModelo, ListarModelos, ListarModelosDisponibles, PrepararSubidaModelo, PublicarModelo,
+)
+from ..aplicacion.puertos import VerificadorTokens
 from ..config import Settings
-from ..infraestructura.http.cliente_inferencia import ClienteInferenciaHttp
+from ..dominio.errores import NoAutenticado
+from ..dominio.usuario import Usuario
+from ..infraestructura.aws import cliente_s3, cliente_sqs
+from ..infraestructura.cognito.verificador import VerificadorCognito
 from ..infraestructura.postgres.conexion import crear_pool
 from ..infraestructura.postgres.repositorios import (
     RepositorioEstudiosPostgres, RepositorioModelosPostgres, RepositorioTrabajosPostgres,
@@ -27,65 +29,63 @@ from ..infraestructura.postgres.repositorios import (
 from ..infraestructura.reloj import RelojSistema
 from ..infraestructura.s3.almacen_estudios import AlmacenEstudiosS3
 from ..infraestructura.s3.catalogo_modelos import CatalogoModelosS3
+from ..infraestructura.sqs.colas import ColaSqs
 
 
 @dataclass
 class Contenedor:
     settings: Settings
     listar_disponibles: ListarModelosDisponibles
+    preparar_subida: PrepararSubidaModelo
     publicar_modelo: PublicarModelo
     listar_modelos: ListarModelos
     consultar_modelo: ConsultarModelo
     crear_estudio: CrearEstudio
     encolar_inferencia: EncolarInferencia
     consultar_trabajo: ConsultarTrabajo
-    despachador: Despachador
     pool: object
-    cliente_inferencia: ClienteInferenciaHttp
+    verificador: VerificadorTokens | None      # None = sin Cognito: todos anónimos
 
     def abrir(self) -> None:
         self.pool.open()          # type: ignore[attr-defined]
 
     def cerrar(self) -> None:
-        self.cliente_inferencia.cerrar()
         self.pool.close()         # type: ignore[attr-defined]
 
 
 def armar(settings: Settings) -> Contenedor:
+    settings.exigir("cola_evaluaciones_url")
     pool = crear_pool(settings.database_url)
-    s3 = boto3.client(
-        "s3",
-        region_name=settings.aws_region,
-        config=BotoConfig(connect_timeout=5, read_timeout=15, retries={"max_attempts": 2},
-                          signature_version="s3v4",
-                          s3={"addressing_style": "path" if os.environ.get("AWS_ENDPOINT_URL") else "auto"}),
-    )
+    s3 = cliente_s3(settings.aws_region)
+    sqs = cliente_sqs(settings.aws_region)
     reloj = RelojSistema()
 
     modelos = RepositorioModelosPostgres(pool)
     estudios = RepositorioEstudiosPostgres(pool)
     trabajos = RepositorioTrabajosPostgres(pool)
     almacen = AlmacenEstudiosS3(s3, settings.bucket_estudios, settings.s3_url_publica)
-    catalogo = CatalogoModelosS3(s3, settings.bucket_modelos, settings.prefijo_modelos)
-    cliente = ClienteInferenciaHttp(settings.inferencia_url, settings.timeout_inferencia_s)
+    catalogo = CatalogoModelosS3(s3, settings.bucket_modelos, settings.prefijo_modelos, settings.s3_url_publica)
+    inferencias = ColaSqs(sqs, settings.cola_inferencias_url)
+    evaluaciones = ColaSqs(sqs, settings.cola_evaluaciones_url)
 
-    despachar = DespacharTrabajo(estudios, modelos, trabajos, cliente, reloj,
-                                 settings.bucket_modelos, settings.bucket_estudios, settings.max_intentos)
-    despachador = Despachador(trabajos, despachar, settings.intervalo_despacho_s,
-                              settings.max_intentos, settings.huerfanos_minutos)
+    verificador = None
+    if settings.cognito_user_pool_id:
+        verificador = VerificadorCognito(settings.aws_region, settings.cognito_user_pool_id,
+                                         settings.clientes_cognito)
 
     return Contenedor(
         settings=settings,
         listar_disponibles=ListarModelosDisponibles(catalogo, modelos),
-        publicar_modelo=PublicarModelo(catalogo, modelos, reloj, settings.prefijo_modelos),
+        preparar_subida=PrepararSubidaModelo(catalogo, settings.max_bytes_modelo, settings.prefijo_modelos),
+        publicar_modelo=PublicarModelo(catalogo, modelos, reloj, settings.prefijo_modelos, evaluaciones),
         listar_modelos=ListarModelos(modelos),
         consultar_modelo=ConsultarModelo(modelos),
         crear_estudio=CrearEstudio(estudios, almacen, reloj, settings.max_bytes_estudio, settings.prefijo_estudios),
-        encolar_inferencia=EncolarInferencia(estudios, modelos, trabajos, almacen, reloj),
+        encolar_inferencia=EncolarInferencia(estudios, modelos, trabajos, almacen, reloj, inferencias,
+                                             settings.bucket_modelos, settings.bucket_estudios),
         consultar_trabajo=ConsultarTrabajo(trabajos),
-        despachador=despachador,
         pool=pool,
-        cliente_inferencia=cliente,
+        verificador=verificador,
     )
 
 
@@ -97,6 +97,10 @@ def contenedor(request: Request) -> Contenedor:
 
 def dep_listar_disponibles(request: Request) -> ListarModelosDisponibles:
     return contenedor(request).listar_disponibles
+
+
+def dep_preparar_subida(request: Request) -> PrepararSubidaModelo:
+    return contenedor(request).preparar_subida
 
 
 def dep_publicar_modelo(request: Request) -> PublicarModelo:
@@ -123,6 +127,15 @@ def dep_consultar_trabajo(request: Request) -> ConsultarTrabajo:
     return contenedor(request).consultar_trabajo
 
 
-def usuario_actual() -> str:
-    """Punto de extensión para autenticación. Hoy todos son anónimos."""
-    return "anonimo"
+def dep_verificador(request: Request) -> VerificadorTokens | None:
+    return contenedor(request).verificador
+
+
+def usuario_actual(request: Request, verificador: VerificadorTokens | None = Depends(dep_verificador)) -> Usuario:
+    """El usuario del access token de Cognito (Authorization: Bearer …). Sin Cognito, anónimo."""
+    if verificador is None:
+        return Usuario.anonimo()
+    tipo, _, token = request.headers.get("authorization", "").partition(" ")
+    if tipo.lower() != "bearer" or not token.strip():
+        raise NoAutenticado("falta el token: ingresá de nuevo")
+    return verificador.verificar(token.strip())

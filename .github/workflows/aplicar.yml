@@ -1,0 +1,68 @@
+name: Aplicar
+
+# A mano y nada más. No se dispara con un push: las credenciales del lab vencen cada sesión, el
+# lab cuesta unos USD 7 por día prendido y la regla de uso es destruir al terminar. Prender la
+# infraestructura es una decisión de una persona, no de un merge.
+on:
+  workflow_dispatch:
+    inputs:
+      confirmar:
+        description: 'Escribí "aplicar" para confirmar'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: infraestructura
+  cancel-in-progress: false
+
+jobs:
+  aplicar:
+    name: Terraform Apply
+    runs-on: ubuntu-latest
+    if: inputs.confirmar == 'aplicar'
+
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
+      AWS_REGION: us-east-1
+      TF_IN_AUTOMATION: true
+      TF_INPUT: false
+      TF_VAR_email_admin: ${{ secrets.EMAIL_ADMIN }}
+      TF_VAR_email_alertas: ${{ secrets.EMAIL_ALERTAS }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.16.5
+          terraform_wrapper: false
+
+      - name: Bucket del estado
+        run: bash terraform/organization/scripts/bootstrap-estado.sh
+
+      # Tarda unos quince minutos la primera vez: el constructor arma las imágenes dentro de la
+      # cuenta y el apply las espera antes de crear los servicios de ECS. El runner de Ubuntu ya
+      # trae el CLI de AWS, que es lo que usan scripts/buckets.sh y esa espera.
+      - name: Apply
+        run: bash terraform/organization/scripts/tf.sh apply -auto-approve -no-color
+
+      - name: Resumen
+        shell: bash
+        run: |
+          {
+            echo '## Listo'
+            echo ''
+            echo "| Dato | Valor |"
+            echo "|------|-------|"
+            echo "| sitio | $(bash terraform/organization/scripts/tf.sh output -raw url) |"
+            echo "| api | $(bash terraform/organization/scripts/tf.sh output -raw api) |"
+            echo "| admin inicial | $(bash terraform/organization/scripts/tf.sh output -raw admin) |"
+            echo "| versión del código | $(bash terraform/organization/scripts/tf.sh output -raw version_codigo) |"
+            echo ''
+            echo 'Acordate de correr «Destruir» al terminar la sesión de trabajo.'
+          } >> "$GITHUB_STEP_SUMMARY"

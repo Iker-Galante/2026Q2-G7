@@ -12,6 +12,21 @@ from .estudio import Estudio
 ESTADOS_EVALUACION = ("pendiente", "en_curso", "ok", "error")
 
 
+@dataclass(frozen=True)
+class ResultadoEvaluacion:
+    """Lo que publica el evaluador: métricas agregadas, nunca resultados caso por caso."""
+    metricas: dict[str, Any]
+    conjunto: str
+    conjunto_version: str
+    manifiesto: dict[str, Any]
+    evaluador_id: str
+    evaluado_en: datetime
+
+    @property
+    def accuracy(self) -> float:
+        return float(self.metricas["accuracy"])
+
+
 @dataclass
 class Modelo:
     id: UUID
@@ -69,6 +84,11 @@ class Modelo:
         self.publicado = ahora
         for campo in self._campos_evaluacion:
             setattr(self, campo, None)
+
+    def no_se_pudo_encolar(self, motivo: str) -> None:
+        """La cola de evaluaciones no contestó: queda en error para que se pueda volver a publicar."""
+        self.estado_evaluacion = "error"
+        self.error = motivo
 
     def verificar_compatible(self, estudio: Estudio) -> None:
         if estudio.tipo_estudio != self.tipo_estudio:
