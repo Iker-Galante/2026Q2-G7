@@ -91,7 +91,8 @@ def test_pendiente_sin_mensaje_se_recupera(entorno):
     assert len(sqs.mensajes) == 2
 
 
-def test_tres_modelos_concurrentes_y_estado_parcial(entorno):
+def test_modelos_concurrentes_y_estado_parcial(entorno):
+    n = len(catalogo())
     sqs = Sqs()
     pool, s3, s = entorno
     def ejecutar(_):
@@ -101,15 +102,15 @@ def test_tres_modelos_concurrentes_y_estado_parcial(entorno):
         manager.ejecutar()
     with ThreadPoolExecutor(2) as executor:
         list(executor.map(ejecutar, range(2)))
-    assert len(sqs.mensajes) == 3
-    assert len({m["modelo_id"] for m in sqs.mensajes}) == 3
+    assert len(sqs.mensajes) == n
+    assert len({m["modelo_id"] for m in sqs.mensajes}) == n
     with pool.connection() as conn:
         conn.execute("update modelo set estado_evaluacion='ok', accuracy=0.9 where nombre=%s", (catalogo()[0].nombre,))
         conn.execute("update modelo set estado_evaluacion='error' where nombre=%s", (catalogo()[1].nombre,))
     estado = estado_demo(s, pool, s3)
-    assert (estado["estado"], estado["listos"], estado["errores"], estado["pendientes"]) == ("parcial", 1, 1, 1)
+    assert (estado["estado"], estado["listos"], estado["errores"], estado["pendientes"]) == ("parcial", 1, 1, n - 2)
     ejecutar(0)
-    assert len(sqs.mensajes) == 3
+    assert len(sqs.mensajes) == n
     with pool.connection() as conn:
         conn.execute("update modelo set estado_evaluacion='ok', accuracy=0.9")
     assert estado_demo(s, pool, s3)["estado"] == "ok"
@@ -127,7 +128,7 @@ def test_un_error_de_integridad_no_detiene_otros_modelos(entorno):
         tarea.verificado = True
     for _ in range(3):
         manager.ejecutar()
-    assert len(sqs.mensajes) == 2
+    assert len(sqs.mensajes) == len(catalogo()) - 1
     estado = estado_demo(s, pool, s3)
     assert estado["errores"] == 1
     assert estado["modelos"][0]["estado"] == "error"
@@ -152,7 +153,7 @@ def test_recuperacion_individual_conserva_otros_modelos(entorno, monkeypatch):
         return t
     monkeypatch.setattr(recuperar, "InicializarModelo", inicializador)
     recuperar.reintentar(s, pool, s3, sqs, md)
-    assert len(sqs.mensajes) == 4
+    assert len(sqs.mensajes) == len(catalogo()) + 1
     assert sqs.mensajes[-1]["nombre"] == md.nombre
     with pool.connection() as conn:
         assert conn.execute("select id, publicado, accuracy from modelo where nombre<>%s order by id", (md.nombre,)).fetchall() == sanos

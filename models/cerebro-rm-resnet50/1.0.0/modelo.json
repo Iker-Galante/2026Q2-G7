@@ -1,0 +1,42 @@
+{
+  "nombre": "cerebro-rm-resnet50",
+  "version": "1.0.0",
+  "tipo_estudio": "cerebro-rm",
+  "tarea": "clasificacion",
+  "origen": "https://huggingface.co/spaces/visheshallahabadi/brain-tumor-detection/blob/8d926d391ff8b0f32dbd70cf864dcfede6b75362/brain_tumor_classifier.onnx",
+  "entrada": {
+    "nombre": "input",
+    "layout": "NCHW",
+    "forma": [
+      1,
+      3,
+      224,
+      224
+    ],
+    "dtype": "float32",
+    "espacio_color": "RGB",
+    "redimension": "estirar",
+    "escala": 255,
+    "media": [
+      0.485,
+      0.456,
+      0.406
+    ],
+    "desvio": [
+      0.229,
+      0.224,
+      0.225
+    ]
+  },
+  "salida": {
+    "nombre": "output",
+    "tipo": "logits",
+    "etiquetas": [
+      "glioma",
+      "notumor",
+      "meningioma",
+      "pituitary"
+    ],
+    "positiva": null
+  }
+}

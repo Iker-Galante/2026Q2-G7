@@ -1,7 +1,7 @@
 import type { CSSProperties } from "react";
 import type { MatrizConfusion, Modelo } from "../api/tipos";
 import { fechaLocal, hashCorto, numero, porcentaje } from "../utilidades/formato";
-import { casosDe, leerNumero } from "../utilidades/metricas";
+import { casosDe, leerNumero, nombreTipo } from "../utilidades/metricas";
 
 function esMatrizConfusion(valor: unknown): valor is MatrizConfusion {
   if (typeof valor !== "object" || valor === null) return false;
@@ -79,7 +79,7 @@ export default function RendimientoModelo({ modelo }: { modelo: Modelo }) {
         <div>
           <h2>{modelo.estado_evaluacion === "pendiente" ? "En cola de evaluación" : "Evaluando"}</h2>
           <p className="suave">
-            Se está midiendo contra el conjunto reservado de {modelo.tipo_estudio}. Esta página se
+            Se está midiendo contra el conjunto reservado de {nombreTipo(modelo.tipo_estudio)}. Esta página se
             actualiza sola.
           </p>
         </div>

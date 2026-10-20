@@ -7,3 +7,5 @@
 *.tftpl text eol=lf
 *.yml  text eol=lf
 *.yaml  text eol=lf
+# Cada manifiesto fija el SHA-256 de su modelo.json: un CRLF en el checkout lo invalida.
+models/**/modelo.json text eol=lf

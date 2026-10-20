@@ -1,0 +1,19 @@
+{
+  "nombre": "cerebro-rm-resnet50",
+  "version": "1.0.0",
+  "revision": "8d926d391ff8b0f32dbd70cf864dcfede6b75362",
+  "origen": "https://huggingface.co/spaces/visheshallahabadi/brain-tumor-detection",
+  "licencia": "Apache-2.0 (declarada por el autor)",
+  "preprocesamiento": "https://huggingface.co/spaces/visheshallahabadi/brain-tumor-detection/blob/8d926d391ff8b0f32dbd70cf864dcfede6b75362/app.py",
+  "archivos": {
+    "modelo.onnx": {
+      "url": "https://huggingface.co/spaces/visheshallahabadi/brain-tumor-detection/resolve/8d926d391ff8b0f32dbd70cf864dcfede6b75362/brain_tumor_classifier.onnx",
+      "sha256": "eb161dc1aded90bf177bcc4ecb6a149dab1e51174abf1fa0411c28d3cb5a8284",
+      "bytes": 93983169
+    },
+    "modelo.json": {
+      "sha256": "5d35c0a9b9089ac79cb0e6e02664a8bf1be4f36da0b88d1fd3baf353015a666a",
+      "bytes": 809
+    }
+  }
+}

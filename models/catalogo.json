@@ -16,5 +16,17 @@
     "version": "1.0.0",
     "nombre_visible": "EfficientNet-B0 · Neumonía",
     "manifiesto": "torax-rx-efficientnet-b0/1.0.0/manifest.json"
+  },
+  {
+    "nombre": "cerebro-rm-efficientnetb3",
+    "version": "1.0.0",
+    "nombre_visible": "EfficientNetB3 · Tumor cerebral",
+    "manifiesto": "cerebro-rm-efficientnetb3/1.0.0/manifest.json"
+  },
+  {
+    "nombre": "cerebro-rm-resnet50",
+    "version": "1.0.0",
+    "nombre_visible": "ResNet-50 · Tumor cerebral",
+    "manifiesto": "cerebro-rm-resnet50/1.0.0/manifest.json"
   }
 ]

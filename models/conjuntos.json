@@ -1,0 +1,18 @@
+[
+  {
+    "tipo_estudio": "torax-rx",
+    "version": "v1",
+    "hf": "hf-vision/chest-xray-pneumonia",
+    "split": "test",
+    "etiquetas": ["NORMAL", "PNEUMONIA"],
+    "por_clase": 100
+  },
+  {
+    "tipo_estudio": "cerebro-rm",
+    "version": "v1",
+    "hf": "AIOmarRehan/Brain_Tumor_MRI_Dataset",
+    "split": "test",
+    "etiquetas": ["glioma", "meningioma", "notumor", "pituitary"],
+    "por_clase": 50
+  }
+]

@@ -256,3 +256,102 @@ Las descargas temporales y pruebas de compatibilidad realizadas para esta invest
 - Comandos de espera global e individual verificados. El entorno del usuario queda funcionando.
 - Revisión visual y navegación manual en móvil/teclado pendientes: no hay navegador integrado
   disponible. Despliegue real en AWS pendiente de autorización.
+
+## 10. Ampliación: un segundo tipo de estudio (RM de cerebro)
+
+Implementada y verificada localmente el 20 de octubre de 2026. Suma dos modelos de otra
+modalidad y región, con su propio conjunto reservado. Reemplaza, para esta ampliación, el
+«no agregar otro dataset/modalidad» de la sección 8.
+
+### 10.1 Búsqueda
+
+Requisitos: clasificación de imagen 2D, pesos en ONNX (el único motor es ONNX Runtime 1.18 en
+CPU), descarga pública por revisión inmutable, licencia declarada y preprocesamiento
+documentado por el autor (código o ficha), para no tener que adivinarlo. Además, un dataset
+etiquetado con las mismas clases, público y servido por la API de datasets-server de Hugging
+Face, que es lo que ya usa `tools/preparar_conjunto.py`.
+
+Se recorrieron las APIs de modelos y Spaces de Hugging Face por región y modalidad (cerebro,
+piel/dermatoscopía, retina/OCT/fondo de ojo, rodilla, fractura, mama, histopatología, MedMNIST).
+
+| Familia | Candidatos ONNX revisados | Resultado |
+| --- | --- | --- |
+| **RM de cerebro, 4 clases** | Udit013 (MIT, código y paper), Space visheshallahabadi (Apache-2.0, `app.py`), NareshKumarSekar (MIT), y varios sin licencia o sin ficha | **Elegida**: dos modelos con licencia y preprocesamiento documentado, más un test público CC0 con las mismas clases. |
+| Dermatoscopía (HAM10000/ISIC) | hakim78, Krane04, robinlandais, vin0san, Eraly-ml | Fichas vacías o sin preprocesamiento; algunos fp16. |
+| OCT de retina | animeshakr (MIT, paper) | Un solo candidato con licencia; 243 MB. |
+| Rodilla, artrosis | c2p-cmd (MIT) | Un solo candidato; su ejemplo de inferencia transpone mal la imagen. |
+| Histopatología | kaczmarj CAMELYON16 (CC-BY-4.0) | Espera embeddings de CTransPath, no una imagen. |
+| BreastMNIST | Daemons-Q ResNet-18/50 | 28 × 28; la ficha documenta dudas de licencia y contaminación del dataset. |
+
+### 10.2 Modelos seleccionados
+
+| Identidad | Nombre visible | Fuente y revisión | Licencia | ONNX |
+| --- | --- | --- | --- | --- |
+| `cerebro-rm-efficientnetb3` v1.0.0 | EfficientNetB3 · Tumor cerebral | [Udit013/brain-tumor-efficientnetb3](https://huggingface.co/Udit013/brain-tumor-efficientnetb3) @ `31a6602d40ea14a1e012855c4529326d06f9c126` | MIT | 46.448.207 bytes, SHA-256 `320b1ef6…155991c` |
+| `cerebro-rm-resnet50` v1.0.0 | ResNet-50 · Tumor cerebral | [Space visheshallahabadi/brain-tumor-detection](https://huggingface.co/spaces/visheshallahabadi/brain-tumor-detection) @ `8d926d391ff8b0f32dbd70cf864dcfede6b75362` | Apache-2.0 | 93.983.169 bytes, SHA-256 `eb161dc1…cb5a8284` |
+
+Los dos comparten `tipo_estudio = cerebro-rm` y las etiquetas `glioma`, `meningioma`,
+`notumor`, `pituitary`. Son arquitecturas y frameworks distintos (Keras con tf2onnx y
+PyTorch), entrenados por autores distintos.
+
+Contratos, tomados de la documentación de cada autor y del grafo, sin ajustar nada para
+mejorar resultados:
+
+- **EfficientNetB3**: entrada `input` NHWC [1, 256, 256, 3] con píxeles crudos (`escala` 1, sin
+  media ni desvío: el grafo reescala y normaliza adentro). Salida `dense_2` ya pasada por
+  softmax → `probabilidades`. Orden de clases: `CLASS_NAMES` de `src/btc/config.py` del autor.
+- **ResNet-50**: entrada `input` NCHW [1, 3, 224, 224], `escala` 255 y normalización ImageNet,
+  como en el `app.py` del Space. Salida `output` en logits (Gemm) → `logits`. El autor nombra la
+  clase 1 `healthy`; el contrato la llama `notumor` para usar el vocabulario del conjunto, sin
+  cambiar el índice. El grafo tiene 53 convoluciones: es una ResNet-50.
+
+Verificación técnica previa, en un contenedor sin red con `onnx.checker` y ONNX Runtime 1.18:
+los dos cargan y corren con `OnnxMotor` e `Inferidor` (opset 13 y 17). Sobre 24 casos (6 por
+clase), EfficientNetB3 acertó 23 y ResNet-50, 24.
+
+### 10.3 Conjunto reservado `cerebro-rm/v1`
+
+- Fuente: [AIOmarRehan/Brain_Tumor_MRI_Dataset](https://huggingface.co/datasets/AIOmarRehan/Brain_Tumor_MRI_Dataset),
+  revisión `a1beff9ed4f903fb3cb2b433eb65cd151d901024`, licencia CC0-1.0. Su único split, `test`, es el
+  `Testing` publicado del dataset de Masoud Nickparvar en Kaggle: 1311 imágenes (300 glioma,
+  306 meningioma, 405 notumor, 300 pituitary), compiladas de Figshare, SARTAJ y Br35H.
+- Se toman 50 casos por clase (200 en total, igual que tórax), PNG RGB, semilla 42.
+
+**Limitación conocida.** El autor de EfficientNetB3 midió que el test de ese dataset tiene casi-
+duplicados del train (el 44 % por pHash, el 7 % exactos). Los modelos entrenados con ese train
+dan métricas optimistas sobre este test. El 100 % de ResNet-50 (200 de 200) indica, además,
+que muy probablemente vio esas mismas imágenes al entrenar: su ficha no dice con qué datos lo
+hizo. No hay un test externo público con las cuatro clases (el de Navoneel Chakrabarty es
+binario), así que la demo mide sobre este y lo declara. No son métricas clínicas.
+
+### 10.4 Cambios de implementación
+
+- `models/conjuntos.json`: un conjunto por tipo de estudio (origen en Hugging Face, split,
+  etiquetas, casos por clase y versión). Antes estaba fijo en el código.
+- `tools/demo_assets.py`: `ConjuntoDemo`, `conjuntos()` y `conjunto_de(modelo)`, que exige que las
+  etiquetas del conjunto estén en las del contrato, igual que el evaluador. `validar_conjunto`
+  usa el reparto del conjunto. `preparar` arma cada conjunto una sola vez por pasada; si falla
+  el de un tipo, los modelos del otro siguen.
+- El evaluador, el worker, el backend y Terraform no cambian: el evaluador ya buscaba el
+  conjunto por `tipo_estudio`, y Terraform empaqueta `models/` entero.
+- UI: nombres legibles para los tipos conocidos («Tórax · RX», «Cerebro · RM») en tarjetas,
+  filtros, ficha y cargador.
+- `.gitattributes` fuerza LF en `models/**/modelo.json`, porque su SHA-256 está fijado en el
+  manifiesto y un CRLF en el checkout lo invalidaría.
+
+### 10.5 Verificación
+
+- 127 pruebas Python aprobadas, incluidas las 6 de integración contra una base PostgreSQL
+  descartable. Pruebas nuevas: conjunto de cuatro clases con su reparto, y un conjunto que
+  falla sin bloquear los modelos de otro tipo ni reintentarse dentro de la misma pasada.
+- TypeScript sin errores y las dos pruebas de la UI aprobadas.
+- Actualización del entorno habitual, sin borrar volúmenes: el conjunto `torax-rx/v1` existente
+  pasó la validación nueva y no se volvió a bajar. Los tres modelos de tórax conservaron IDs y
+  métricas. Se agregaron los dos de cerebro y la demo quedó en 5 de 5.
+- Evaluación real sobre `cerebro-rm/v1` (200 casos): EfficientNetB3 accuracy 0,955 y F1 macro
+  0,954 (8 gliomas predichos como meningioma y 1 como hipófisis); ResNet-50 accuracy 1,0 (ver
+  10.3).
+- Inferencia completa por la API con los dos modelos (glioma, notumor y pituitary): cada
+  trabajo usa el modelo elegido y devuelve probabilidades válidas para las cuatro clases.
+- Revisión visual: catálogo con filtros por tipo, «Mejor del tipo» por tipo, ficha con
+  métricas macro y matriz 4 × 4. Despliegue real en AWS pendiente de autorización.

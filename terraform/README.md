@@ -39,8 +39,9 @@ sobre `terraform/modules`).
 2. Crea la red, la base, los buckets, las colas, Cognito y API Gateway; sube el paquete al bucket
    de artefactos.
 3. Lanza el constructor: una `t3.large` en la capa de aplicación que construye las imágenes
-   `backend` y `ml`, las sube a ECR, sube el sitio al bucket web y, con `datos_demo`, siembra el
-   los tres modelos iniciales y un conjunto compartido de 200 casos de Hugging Face. Después se apaga.
+   `backend` y `ml`, las sube a ECR, sube el sitio al bucket web y, con `datos_demo`, siembra
+   los cinco modelos iniciales y un conjunto de 200 casos de Hugging Face por tipo de estudio
+   (Rx de tórax y RM de cerebro). Después se apaga.
 4. Espera las imágenes (unos diez minutos la primera vez) y crea los servicios de ECS.
 5. Imprime la dirección del sitio y el admin inicial. La verificación es abrir el sitio y entrar.
 
@@ -66,10 +67,10 @@ Después:
 
 1. Abrí `url`. El admin entra con la contraseña temporal que le mandó Cognito; cualquiera puede
    crear una cuenta de institución o de publicador desde «Ingresar».
-2. Con `datos_demo = true`, esperá la preparación y evaluación automáticas de los tres modelos
+2. Con `datos_demo = true`, esperá la preparación y evaluación automáticas de los cinco modelos
    iniciales. La web informa el estado y actualiza el catálogo; no hay que pulsar «Publicar».
    El evaluador arranca solo (de 0 a 1 tarea) cuando el procesador encola la evaluación.
-3. En `/modelos`, abrí la ficha del modelo evaluado y subí una radiografía con tu cuenta de institución.
+3. En `/modelos`, abrí la ficha del modelo evaluado y subí una imagen de su tipo de estudio con tu cuenta de institución.
 
 Si pusiste `email_alertas`, AWS manda una confirmación de SNS que hay que aceptar una vez.
 
