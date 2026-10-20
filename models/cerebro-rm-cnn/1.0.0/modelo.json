@@ -1,0 +1,34 @@
+{
+  "nombre": "cerebro-rm-cnn",
+  "version": "1.0.0",
+  "tipo_estudio": "cerebro-rm",
+  "tarea": "clasificacion",
+  "origen": "https://huggingface.co/spaces/NareshKumarSekar/BrainTumor/blob/0323f6ee650bfa2b0ef5d3352e15971ea0d6c5e3/brain_tumor_model.onnx",
+  "entrada": {
+    "nombre": "input_layer_1",
+    "layout": "NHWC",
+    "forma": [
+      1,
+      224,
+      224,
+      3
+    ],
+    "dtype": "float32",
+    "espacio_color": "RGB",
+    "redimension": "estirar",
+    "escala": 255,
+    "media": null,
+    "desvio": null
+  },
+  "salida": {
+    "nombre": "output_0",
+    "tipo": "probabilidades",
+    "etiquetas": [
+      "glioma",
+      "meningioma",
+      "notumor",
+      "pituitary"
+    ],
+    "positiva": null
+  }
+}

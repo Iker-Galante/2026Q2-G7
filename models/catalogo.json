@@ -24,9 +24,9 @@
     "manifiesto": "cerebro-rm-efficientnetb3/1.0.0/manifest.json"
   },
   {
-    "nombre": "cerebro-rm-resnet50",
+    "nombre": "cerebro-rm-cnn",
     "version": "1.0.0",
-    "nombre_visible": "ResNet-50 · Tumor cerebral",
-    "manifiesto": "cerebro-rm-resnet50/1.0.0/manifest.json"
+    "nombre_visible": "CNN · Tumor cerebral",
+    "manifiesto": "cerebro-rm-cnn/1.0.0/manifest.json"
   }
 ]

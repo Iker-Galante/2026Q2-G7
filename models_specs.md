@@ -276,7 +276,7 @@ piel/dermatoscopía, retina/OCT/fondo de ojo, rodilla, fractura, mama, histopato
 
 | Familia | Candidatos ONNX revisados | Resultado |
 | --- | --- | --- |
-| **RM de cerebro, 4 clases** | Udit013 (MIT, código y paper), Space visheshallahabadi (Apache-2.0, `app.py`), NareshKumarSekar (MIT), y varios sin licencia o sin ficha | **Elegida**: dos modelos con licencia y preprocesamiento documentado, más un test público CC0 con las mismas clases. |
+| **RM de cerebro, 4 clases** | Udit013 (MIT, código y paper), Space NareshKumarSekar (MIT, `app.py`), Space visheshallahabadi (Apache-2.0, `app.py`), y varios sin licencia o sin ficha | **Elegida**: modelos con licencia y preprocesamiento documentado, más un test público CC0 con las mismas clases. |
 | Dermatoscopía (HAM10000/ISIC) | hakim78, Krane04, robinlandais, vin0san, Eraly-ml | Fichas vacías o sin preprocesamiento; algunos fp16. |
 | OCT de retina | animeshakr (MIT, paper) | Un solo candidato con licencia; 243 MB. |
 | Rodilla, artrosis | c2p-cmd (MIT) | Un solo candidato; su ejemplo de inferencia transpone mal la imagen. |
@@ -288,11 +288,11 @@ piel/dermatoscopía, retina/OCT/fondo de ojo, rodilla, fractura, mama, histopato
 | Identidad | Nombre visible | Fuente y revisión | Licencia | ONNX |
 | --- | --- | --- | --- | --- |
 | `cerebro-rm-efficientnetb3` v1.0.0 | EfficientNetB3 · Tumor cerebral | [Udit013/brain-tumor-efficientnetb3](https://huggingface.co/Udit013/brain-tumor-efficientnetb3) @ `31a6602d40ea14a1e012855c4529326d06f9c126` | MIT | 46.448.207 bytes, SHA-256 `320b1ef6…155991c` |
-| `cerebro-rm-resnet50` v1.0.0 | ResNet-50 · Tumor cerebral | [Space visheshallahabadi/brain-tumor-detection](https://huggingface.co/spaces/visheshallahabadi/brain-tumor-detection) @ `8d926d391ff8b0f32dbd70cf864dcfede6b75362` | Apache-2.0 | 93.983.169 bytes, SHA-256 `eb161dc1…cb5a8284` |
+| `cerebro-rm-cnn` v1.0.0 | CNN · Tumor cerebral | [Space NareshKumarSekar/BrainTumor](https://huggingface.co/spaces/NareshKumarSekar/BrainTumor) @ `0323f6ee650bfa2b0ef5d3352e15971ea0d6c5e3` | MIT | 76.661.663 bytes, SHA-256 `98e70366…0e3ab7` |
 
 Los dos comparten `tipo_estudio = cerebro-rm` y las etiquetas `glioma`, `meningioma`,
-`notumor`, `pituitary`. Son arquitecturas y frameworks distintos (Keras con tf2onnx y
-PyTorch), entrenados por autores distintos.
+`notumor`, `pituitary`. Son autores y arquitecturas distintos: una EfficientNetB3 preentrenada
+en ImageNet y una red convolucional propia de 6 convoluciones, las dos exportadas de Keras.
 
 Contratos, tomados de la documentación de cada autor y del grafo, sin ajustar nada para
 mejorar resultados:
@@ -300,14 +300,20 @@ mejorar resultados:
 - **EfficientNetB3**: entrada `input` NHWC [1, 256, 256, 3] con píxeles crudos (`escala` 1, sin
   media ni desvío: el grafo reescala y normaliza adentro). Salida `dense_2` ya pasada por
   softmax → `probabilidades`. Orden de clases: `CLASS_NAMES` de `src/btc/config.py` del autor.
-- **ResNet-50**: entrada `input` NCHW [1, 3, 224, 224], `escala` 255 y normalización ImageNet,
-  como en el `app.py` del Space. Salida `output` en logits (Gemm) → `logits`. El autor nombra la
-  clase 1 `healthy`; el contrato la llama `notumor` para usar el vocabulario del conjunto, sin
-  cambiar el índice. El grafo tiene 53 convoluciones: es una ResNet-50.
+- **CNN**: entrada `input_layer_1` NHWC [1, 224, 224, 3], dividida por 255 y sin otra
+  normalización, como la función `classify_tumor` del `app.py` del Space. Salida `output_0` ya
+  pasada por softmax → `probabilidades`. El `app.py` nombra las clases `Glioma`, `Meningioma`,
+  `No Tumor`, `Pituitary`; el contrato conserva ese orden con el vocabulario del conjunto.
 
-Verificación técnica previa, en un contenedor sin red con `onnx.checker` y ONNX Runtime 1.18:
-los dos cargan y corren con `OnnxMotor` e `Inferidor` (opset 13 y 17). Sobre 24 casos (6 por
-clase), EfficientNetB3 acertó 23 y ResNet-50, 24.
+Los dos se verificaron en un contenedor sin red con `onnx.checker` y ONNX Runtime 1.18, y cargan
+y corren con `OnnxMotor` e `Inferidor`.
+
+**Descartado: ResNet-50 de visheshallahabadi.** Fue el segundo modelo en la primera versión
+(Apache-2.0, preprocesamiento ImageNet documentado en su `app.py`). Sacó 200 de 200 sobre el
+conjunto reservado, cuando el EfficientNetB3 del paper, entrenado con el mismo dataset, se
+equivoca en 9. Un 100 % sobre este test indica que casi seguro vio esas imágenes al entrenar, y
+su ficha no dice con qué datos lo hizo. En el catálogo se mostraba como «Mejor del tipo», así
+que se reemplazó por la CNN, que tiene un error creíble y repartido entre clases.
 
 ### 10.3 Conjunto reservado `cerebro-rm/v1`
 
@@ -315,14 +321,14 @@ clase), EfficientNetB3 acertó 23 y ResNet-50, 24.
   revisión `a1beff9ed4f903fb3cb2b433eb65cd151d901024`, licencia CC0-1.0. Su único split, `test`, es el
   `Testing` publicado del dataset de Masoud Nickparvar en Kaggle: 1311 imágenes (300 glioma,
   306 meningioma, 405 notumor, 300 pituitary), compiladas de Figshare, SARTAJ y Br35H.
-- Se toman 50 casos por clase (200 en total, igual que tórax), PNG RGB, semilla 42.
+- Se toman 50 casos por clase (200 en total, igual que tórax), PNG RGB, semilla 42. El
+  conjunto preparado localmente tiene hash `sha256:c9bc408b…20c1b9`.
 
 **Limitación conocida.** El autor de EfficientNetB3 midió que el test de ese dataset tiene casi-
-duplicados del train (el 44 % por pHash, el 7 % exactos). Los modelos entrenados con ese train
-dan métricas optimistas sobre este test. El 100 % de ResNet-50 (200 de 200) indica, además,
-que muy probablemente vio esas mismas imágenes al entrenar: su ficha no dice con qué datos lo
-hizo. No hay un test externo público con las cuatro clases (el de Navoneel Chakrabarty es
-binario), así que la demo mide sobre este y lo declara. No son métricas clínicas.
+duplicados del train (el 44 % por pHash, el 7 % exactos). Un modelo entrenado con ese train da
+métricas optimistas sobre este test, y ninguna de las dos fichas permite descartarlo. No hay un
+test externo público con las cuatro clases (el de Navoneel Chakrabarty es binario), así que la
+demo mide sobre este y lo declara. No son métricas clínicas.
 
 ### 10.4 Cambios de implementación
 
@@ -347,10 +353,14 @@ binario), así que la demo mide sobre este y lo declara. No son métricas clíni
 - TypeScript sin errores y las dos pruebas de la UI aprobadas.
 - Actualización del entorno habitual, sin borrar volúmenes: el conjunto `torax-rx/v1` existente
   pasó la validación nueva y no se volvió a bajar. Los tres modelos de tórax conservaron IDs y
-  métricas. Se agregaron los dos de cerebro y la demo quedó en 5 de 5.
-- Evaluación real sobre `cerebro-rm/v1` (200 casos): EfficientNetB3 accuracy 0,955 y F1 macro
-  0,954 (8 gliomas predichos como meningioma y 1 como hipófisis); ResNet-50 accuracy 1,0 (ver
-  10.3).
+  métricas. El conjunto `cerebro-rm/v1` se preparó una vez y se reutilizó al cambiar de modelo.
+- Evaluación real sobre `cerebro-rm/v1` (200 casos):
+
+  | Modelo | Accuracy | F1 macro | Sensibilidad glioma · meningioma · notumor · pituitary |
+  | --- | --- | --- | --- |
+  | EfficientNetB3 | 0,955 | 0,954 | 0,82 · 1,0 · 1,0 · 1,0 |
+  | CNN | 0,935 | 0,935 | 0,96 · 0,84 · 0,98 · 0,96 |
+
 - Inferencia completa por la API con los dos modelos (glioma, notumor y pituitary): cada
   trabajo usa el modelo elegido y devuelve probabilidades válidas para las cuatro clases.
 - Revisión visual: catálogo con filtros por tipo, «Mejor del tipo» por tipo, ficha con

@@ -52,7 +52,7 @@ preentrenados del [registro](models/catalogo.json), todos v1.0.0, de dos tipos d
   - **EfficientNet-B0 · Neumonía** (`torax-rx-efficientnet-b0`).
 - RM de cerebro, glioma / meningioma / notumor / pituitary (`cerebro-rm`):
   - **EfficientNetB3 · Tumor cerebral** (`cerebro-rm-efficientnetb3`).
-  - **ResNet-50 · Tumor cerebral** (`cerebro-rm-resnet50`).
+  - **CNN · Tumor cerebral** (`cerebro-rm-cnn`).
 
 Cada tipo de estudio tiene su conjunto reservado de 200 casos, definido en
 [`models/conjuntos.json`](models/conjuntos.json): se prepara una sola vez y todos los modelos
@@ -74,8 +74,8 @@ y versión. Ateneo evalúa y ejecuta inferencias, no entrena los pesos.
 
 Reiniciar conserva IDs y métricas de los modelos ya evaluados. Los pesos se descargan por
 revisión inmutable y SHA-256 y persisten en S3/MinIO y caché por identidad. Se versionan
-contratos y manifiestos, no los pesos: Mediscan no declara licencia, DenseNet121,
-EfficientNet-B0 y EfficientNetB3 declaran MIT, y ResNet-50 declara Apache-2.0. Ver [models_specs.md](models_specs.md) y los README de cada modelo.
+contratos y manifiestos, no los pesos: Mediscan no declara licencia y los otros cuatro
+declaran MIT. Ver [models_specs.md](models_specs.md) y los README de cada modelo.
 
 Se puede desactivar la preparación con `DATOS_DEMO=false docker compose up -d`; no borra
 modelos existentes ni impide publicar otros.
