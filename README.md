@@ -57,8 +57,8 @@ preentrenados del [registro](models/catalogo.json), todos v1.0.0, de dos tipos d
 Cada tipo de estudio tiene su conjunto reservado de 200 casos, definido en
 [`models/conjuntos.json`](models/conjuntos.json): se prepara una sola vez y todos los modelos
 de ese tipo se publican y evalúan por separado contra él. **No necesitás subir ni publicar un modelo.**
-La web muestra cuántos están listos y actualiza el catálogo; podés usar los que ya terminaron
-mientras se preparan los otros. La primera preparación requiere internet y tarda varios minutos.
+Cada modelo aparece en el catálogo apenas se publica, con «Esperando la evaluación», y la web
+se actualiza sola; podés usar los que ya terminaron mientras se preparan los otros. La primera preparación requiere internet y tarda varios minutos.
 `up -d` no espera la evaluación.
 
 ```bash

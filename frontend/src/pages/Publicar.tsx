@@ -3,8 +3,6 @@ import type { ContratoModelo, Modelo } from "../api/tipos";
 import ListaDisponibles, { clave } from "../components/ListaDisponibles";
 import { Flecha } from "../components/Navegacion";
 import SubirModelo from "../components/SubirModelo";
-import ModelosListos from "../components/ModelosListos";
-import EstadoDemo from "../components/EstadoDemo";
 import { Enlace, rutaDeModelo } from "../enrutador";
 import { useModelos } from "../hooks/useModelos";
 import { usePublicacion } from "../hooks/usePublicacion";
@@ -70,8 +68,6 @@ export default function Publicar() {
         </div>
       </header>
 
-      <ModelosListos modelos={modelos.publicados} conEnlace />
-      <EstadoDemo demo={modelos.demo} />
       <p className="opcion-catalogo">
         ¿Solo querés analizar un estudio? <Enlace a="/modelos">Ir a los modelos disponibles</Enlace>.
       </p>

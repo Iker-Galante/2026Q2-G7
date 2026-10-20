@@ -321,8 +321,9 @@ que se reemplazó por la CNN, que tiene un error creíble y repartido entre clas
   revisión `a1beff9ed4f903fb3cb2b433eb65cd151d901024`, licencia CC0-1.0. Su único split, `test`, es el
   `Testing` publicado del dataset de Masoud Nickparvar en Kaggle: 1311 imágenes (300 glioma,
   306 meningioma, 405 notumor, 300 pituitary), compiladas de Figshare, SARTAJ y Br35H.
-- Se toman 50 casos por clase (200 en total, igual que tórax), PNG RGB, semilla 42. El
-  conjunto preparado localmente tiene hash `sha256:c9bc408b…20c1b9`.
+- Se toman 50 casos por clase (200 en total, igual que tórax), PNG RGB, semilla 42. La
+  selección es determinista; el hash cambia en cada preparación porque los casos se renombran
+  con UUID, pero dos instalaciones desde cero dieron las mismas métricas.
 
 **Limitación conocida.** El autor de EfficientNetB3 midió que el test de ese dataset tiene casi-
 duplicados del train (el 44 % por pHash, el 7 % exactos). Un modelo entrenado con ese train da
@@ -341,7 +342,10 @@ demo mide sobre este y lo declara. No son métricas clínicas.
 - El evaluador, el worker, el backend y Terraform no cambian: el evaluador ya buscaba el
   conjunto por `tipo_estudio`, y Terraform empaqueta `models/` entero.
 - UI: nombres legibles para los tipos conocidos («Tórax · RX», «Cerebro · RM») en tarjetas,
-  filtros, ficha y cargador.
+  filtros, ficha y cargador. Se quitaron los carteles «X de Y modelos iniciales listos»
+  (`EstadoDemo`) y «N modelos listos · No necesitás publicar un modelo para empezar»
+  (`ModelosListos`), que no corresponden a un MVP (reemplaza lo pedido en la sección 6). Cada
+  modelo sigue apareciendo en el catálogo apenas se publica, con «Esperando la evaluación».
 - `.gitattributes` fuerza LF en `models/**/modelo.json`, porque su SHA-256 está fijado en el
   manifiesto y un CRLF en el checkout lo invalidaría.
 
@@ -354,6 +358,9 @@ demo mide sobre este y lo declara. No son métricas clínicas.
 - Actualización del entorno habitual, sin borrar volúmenes: el conjunto `torax-rx/v1` existente
   pasó la validación nueva y no se volvió a bajar. Los tres modelos de tórax conservaron IDs y
   métricas. El conjunto `cerebro-rm/v1` se preparó una vez y se reutilizó al cambiar de modelo.
+- Instalación limpia (`docker compose down -v` y `up`): cada conjunto se armó una vez, se
+  registraron exactamente los cinco modelos iniciales y los cinco quedaron evaluados en unos
+  cinco minutos.
 - Evaluación real sobre `cerebro-rm/v1` (200 casos):
 
   | Modelo | Accuracy | F1 macro | Sensibilidad glioma · meningioma · notumor · pituitary |
