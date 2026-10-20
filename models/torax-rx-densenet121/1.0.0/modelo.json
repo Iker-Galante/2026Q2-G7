@@ -1,0 +1,41 @@
+{
+  "nombre": "torax-rx-densenet121",
+  "version": "1.0.0",
+  "tipo_estudio": "torax-rx",
+  "tarea": "clasificacion",
+  "origen": "https://huggingface.co/ZubaerNiloy/pneumonia-ensemble-onnx/blob/d30e6fe12acc63248e0e669725e2d5944b541df1/densenet121.onnx",
+  "entrada": {
+    "nombre": "input",
+    "layout": "NCHW",
+    "forma": [
+      1,
+      3,
+      224,
+      224
+    ],
+    "dtype": "float32",
+    "espacio_color": "RGB",
+    "redimension": "estirar",
+    "escala": 255,
+    "media": [
+      0.485,
+      0.456,
+      0.406
+    ],
+    "desvio": [
+      0.229,
+      0.224,
+      0.225
+    ]
+  },
+  "salida": {
+    "nombre": "logit",
+    "tipo": "logit_sigmoide",
+    "etiquetas": [
+      "NORMAL",
+      "PNEUMONIA"
+    ],
+    "positiva": "PNEUMONIA",
+    "umbral": 0.5
+  }
+}

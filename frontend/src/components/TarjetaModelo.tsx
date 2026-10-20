@@ -32,7 +32,7 @@ export default function TarjetaModelo({ modelo: m, mejor = false }: Props) {
 
       <div className="tm-cuerpo">
         <div className="tm-titulo">
-          <h3>{m.nombre}</h3>
+          <h3>{m.nombre_visible ?? m.nombre}</h3>
           <span className="version">v{m.version}</span>
           {mejor && <span className="pastilla destacada">Mejor del tipo</span>}
         </div>
@@ -45,8 +45,8 @@ export default function TarjetaModelo({ modelo: m, mejor = false }: Props) {
                 ? "La evaluación no terminó"
                 : "Esperando la evaluación"}
           </span>
-          <span className="tm-ir" aria-hidden="true">
-            <Flecha />
+          <span className="tm-ir">
+            {evaluado ? "Usar este modelo" : "Ver evaluación"} <Flecha />
           </span>
         </div>
       </div>

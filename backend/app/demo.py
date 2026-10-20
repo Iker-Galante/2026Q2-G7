@@ -7,14 +7,14 @@ from contextlib import contextmanager
 
 from psycopg.types.json import Jsonb
 
-from tools.demo_assets import ESTADO, LISTO, MODELO_DIR, NOMBRE, VERSION, PREFIJO, comprobar, escribir_json, leer, manifiesto_modelo
+from tools.demo_assets import (catalogo, comprobar, escribir_json, leer)
+
 
 from .aplicacion.casos_uso.modelos import PublicarModelo
 from .infraestructura.postgres.repositorios import RepositorioModelosPostgres
 from .infraestructura.reloj import RelojSistema
 from .infraestructura.s3.catalogo_modelos import CatalogoModelosS3
 
-CLAVE = f"{NOMBRE}/{VERSION}"
 log = logging.getLogger(__name__)
 
 
@@ -29,17 +29,19 @@ class ConexionPrestada:
 
 
 class OutboxDemo:
-    def __init__(self, conn):
+    def __init__(self, conn, clave):
         self.conn = conn
+        self.clave = clave
 
     def enviar(self, peticion):
         self.conn.execute("insert into demo_inicializacion (clave, mensaje) values (%s, %s)",
-                          (CLAVE, Jsonb(peticion.como_mensaje())))
+                          (self.clave, Jsonb(peticion.como_mensaje())))
 
 
-class InicializarDemo:
-    def __init__(self, pool, s3, sqs, settings):
+class InicializarModelo:
+    def __init__(self, pool, s3, sqs, settings, modelo):
         self.pool, self.s3, self.sqs, self.settings = pool, s3, sqs, settings
+        self.modelo = modelo
         self.verificado = False
         self.terminado = False
         self.errores = 0
@@ -53,35 +55,36 @@ class InicializarDemo:
         except Exception:
             self.errores += 1
             if self.errores >= 3:
-                escribir_json(self.s3, self.settings.bucket_modelos, ESTADO, {"estado": "error"})
+                escribir_json(self.s3, self.settings.bucket_modelos, self.modelo.estado, {"estado": "error"})
                 self.terminado = True
             raise
 
     def _ejecutar(self):
         s = self.settings
+        md = self.modelo
         if not self.verificado:
-            marca = leer(self.s3, s.bucket_modelos, LISTO)
+            marca = leer(self.s3, s.bucket_modelos, md.listo)
             if marca is None:
                 return
-            ref = manifiesto_modelo()["archivos"]["modelo.onnx"]
+            ref = md.metadata()["archivos"]["modelo.onnx"]
             if json.loads(marca)["modelo_sha256"] != ref["sha256"]:
                 raise ValueError("La marca de demo pertenece a otro modelo")
-            datos = leer(self.s3, s.bucket_modelos, PREFIJO + "modelo.onnx")
+            datos = leer(self.s3, s.bucket_modelos, md.prefijo + "modelo.onnx")
             if datos is None:
                 return
             comprobar(datos, ref)
-            contrato = leer(self.s3, s.bucket_modelos, PREFIJO + "modelo.json")
-            if contrato is None or json.loads(contrato) != json.loads((MODELO_DIR / "modelo.json").read_text()):
+            contrato = leer(self.s3, s.bucket_modelos, md.prefijo + "modelo.json")
+            if contrato is None or json.loads(contrato) != md.contrato():
                 raise ValueError("El contrato de demo no coincide")
             self.verificado = True
 
         with self.pool.connection() as conn:
-            if not conn.execute("select pg_try_advisory_xact_lock(82082026) as tomado").fetchone()["tomado"]:
+            if not conn.execute("select pg_try_advisory_xact_lock(hashtextextended(%s, 0)) as tomado", (md.clave,)).fetchone()["tomado"]:
                 return
             modelos = RepositorioModelosPostgres(ConexionPrestada(conn))
-            modelo = modelos.buscar(NOMBRE, VERSION)
+            modelo = modelos.buscar(md.nombre, md.version)
             if modelo is not None:
-                if modelo.contrato != json.loads((MODELO_DIR / "modelo.json").read_text()):
+                if modelo.contrato != md.contrato():
                     raise ValueError("El catálogo contiene otro contrato para la versión de demo")
                 if modelo.estado_evaluacion in ("ok", "error"):
                     self.terminado = modelo.estado_evaluacion == "ok"
@@ -90,24 +93,27 @@ class InicializarDemo:
                     return
             else:
                 caso = PublicarModelo(CatalogoModelosS3(self.s3, s.bucket_modelos), modelos,
-                                      RelojSistema(), s.prefijo_modelos, OutboxDemo(conn))
-                modelo = caso.ejecutar(NOMBRE, VERSION)
+                                      RelojSistema(), s.prefijo_modelos, OutboxDemo(conn, md.clave))
+                modelo = caso.ejecutar(md.nombre, md.version)
                 log.info("demo registrada: %s; evaluación pendiente de envío", modelo.id)
             # Una publicación manual pendiente puede no tener outbox: esperar antes de recuperar.
             from .aplicacion.puertos import PeticionEvaluacion
             conn.execute("""insert into demo_inicializacion (clave, mensaje, intentos, enviado)
                             values (%s, %s, 1, now()) on conflict (clave) do nothing""",
-                         (CLAVE, Jsonb(PeticionEvaluacion.de(modelo).como_mensaje())))
+                         (md.clave, Jsonb(PeticionEvaluacion.de(modelo).como_mensaje())))
         # La fila del modelo y su mensaje ya están confirmados antes de enviar a SQS.
         with self.pool.connection() as conn:
-            conn.execute("select pg_advisory_xact_lock(82082026)")
+            conn.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (md.clave,))
             fila = conn.execute("""select *, enviado is null or
                 enviado < now() - make_interval(secs => %s) as vencido
                 from demo_inicializacion where clave = %s for update""",
-                (s.demo_reenvio_segundos, CLAVE)).fetchone()
+                (s.demo_reenvio_segundos, md.clave)).fetchone()
             estado = conn.execute("select estado_evaluacion from modelo where nombre=%s and version=%s",
-                                  (NOMBRE, VERSION)).fetchone()["estado_evaluacion"]
-            if estado != "pendiente" or fila["intentos"] >= 3 or not (fila["vencido"] or fila["error"]):
+                                  (md.nombre, md.version)).fetchone()["estado_evaluacion"]
+            if estado != "pendiente" or not (fila["vencido"] or fila["error"]):
+                return
+            if fila["intentos"] >= 3:
+                conn.execute("update demo_inicializacion set error=true where clave=%s", (md.clave,))
                 return
             try:
                 self.sqs.send_message(QueueUrl=s.cola_evaluaciones_url, MessageBody=json.dumps(fila["mensaje"]))
@@ -117,20 +123,51 @@ class InicializarDemo:
                 error = True
                 log.exception("falló el envío de demo; reintento limitado")
             conn.execute("""update demo_inicializacion set intentos=intentos+1, enviado=now(), error=%s
-                            where clave=%s""", (error, CLAVE))
+                            where clave=%s""", (error, md.clave))
+
+
+class InicializarDemo:
+    def __init__(self, pool, s3, sqs, settings):
+        self.tareas = [InicializarModelo(pool, s3, sqs, settings, m) for m in catalogo()]
+
+    def ejecutar(self):
+        for tarea in self.tareas:
+            try:
+                tarea.ejecutar()
+            except Exception:
+                log.exception("error inicializando %s; continúo con los otros modelos", tarea.modelo.clave)
 
 
 def estado_demo(settings, pool, s3) -> dict:
-    if not settings.datos_demo:
-        return {"activo": False, "estado": "desactivado"}
-    modelo = RepositorioModelosPostgres(pool).buscar(NOMBRE, VERSION)
-    if modelo is not None and modelo.estado_evaluacion in ("ok", "error", "en_curso"):
-        return {"activo": True, "estado": modelo.estado_evaluacion, "modelo_id": str(modelo.id)}
+    registro = catalogo()
+    existentes = {(m.nombre, m.version): m for m in RepositorioModelosPostgres(pool).listar()}
     with pool.connection() as conn:
-        fila = conn.execute("select intentos from demo_inicializacion where clave=%s", (CLAVE,)).fetchone()
-    if fila and fila["intentos"] >= 3:
-        return {"activo": True, "estado": "error"}
-    marca = leer(s3, settings.bucket_modelos, ESTADO)
-    if marca and json.loads(marca).get("estado") == "error":
-        return {"activo": True, "estado": "error"}
-    return {"activo": True, "estado": "pendiente" if modelo else "preparando"}
+        envios = {f["clave"]: f for f in conn.execute("select clave, intentos, error from demo_inicializacion").fetchall()}
+    estados = []
+    for md in registro:
+        m = existentes.get((md.nombre, md.version))
+        estado = m.estado_evaluacion if m else "preparando"
+        if not settings.datos_demo and m is None:
+            estado = "desactivado"
+        elif estado not in ("ok", "en_curso", "error"):
+            envio = envios.get(md.clave)
+            marca = leer(s3, settings.bucket_modelos, md.estado)
+            if (envio and envio["intentos"] >= 3 and envio["error"]) or (marca and json.loads(marca).get("estado") == "error"):
+                estado = "error"
+        estados.append({"nombre": md.nombre, "version": md.version, "nombre_visible": md.nombre_visible,
+                        "estado": estado, "modelo_id": str(m.id) if m else None})
+    listos = sum(m["estado"] == "ok" for m in estados)
+    errores = sum(m["estado"] == "error" for m in estados)
+    pendientes = sum(m["estado"] in ("preparando", "pendiente", "en_curso") for m in estados)
+    if not settings.datos_demo:
+        global_ = "desactivado"
+    elif listos == len(registro):
+        global_ = "ok"
+    elif listos:
+        global_ = "parcial"
+    elif pendientes:
+        global_ = "preparando"
+    else:
+        global_ = "error"
+    return {"activo": settings.datos_demo, "estado": global_, "esperados": len(registro),
+            "listos": listos, "errores": errores, "pendientes": pendientes, "modelos": estados}

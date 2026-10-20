@@ -7,7 +7,18 @@ import { get } from "../api/cliente";
 
 export interface EstadoDemo {
   activo: boolean;
-  estado: "desactivado" | "preparando" | "pendiente" | "en_curso" | "ok" | "error";
+  estado: "desactivado" | "preparando" | "parcial" | "ok" | "error";
+  esperados: number;
+  listos: number;
+  errores: number;
+  pendientes: number;
+  modelos: {
+    nombre: string;
+    version: string;
+    nombre_visible: string;
+    estado: "desactivado" | "preparando" | "pendiente" | "en_curso" | "ok" | "error";
+    modelo_id: string | null;
+  }[];
 }
 
 export interface EstadoModelos {
@@ -75,7 +86,7 @@ export function useModelos(): EstadoModelos {
   }, [refrescar]);
 
   useEffect(() => {
-    const preparando = demo === null || (demo.activo && ["preparando", "pendiente", "en_curso"].includes(demo.estado));
+    const preparando = demo === null || (demo.activo && demo.pendientes > 0);
     if (!preparando) return;
     const timer = window.setInterval(() => void refrescar(), 5000);
     return () => window.clearInterval(timer);

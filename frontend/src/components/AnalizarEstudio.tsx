@@ -17,6 +17,7 @@ export default function AnalizarEstudio({ modelo }: { modelo: Modelo }) {
   const cabecera = (
     <header className="panel-cabecera">
       <h2>Analizar un estudio</h2>
+      <p className="suave">Modelo: {modelo.nombre_visible ?? modelo.nombre} · v{modelo.version}</p>
     </header>
   );
 
@@ -83,7 +84,12 @@ export default function AnalizarEstudio({ modelo }: { modelo: Modelo }) {
         </div>
       )}
 
-      {inferencia.trabajo && terminado && <ResultadoInferencia trabajo={inferencia.trabajo} />}
+      {inferencia.trabajo && terminado && (
+        <div>
+          <p className="suave">Resultado de {modelo.nombre_visible ?? modelo.nombre} · v{modelo.version}</p>
+          <ResultadoInferencia trabajo={inferencia.trabajo} />
+        </div>
+      )}
 
       {terminado && (
         <button type="button" className="pildora pildora-borde ancha" onClick={() => elegir(null)}>

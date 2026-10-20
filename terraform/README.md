@@ -40,7 +40,7 @@ sobre `terraform/modules`).
    de artefactos.
 3. Lanza el constructor: una `t3.large` en la capa de aplicación que construye las imágenes
    `backend` y `ml`, las sube a ECR, sube el sitio al bucket web y, con `datos_demo`, siembra el
-   modelo de la E2 y el conjunto de 200 casos de Hugging Face. Después se apaga.
+   los tres modelos iniciales y un conjunto compartido de 200 casos de Hugging Face. Después se apaga.
 4. Espera las imágenes (unos diez minutos la primera vez) y crea los servicios de ECS.
 5. Imprime la dirección del sitio y el admin inicial. La verificación es abrir el sitio y entrar.
 
@@ -66,8 +66,8 @@ Después:
 
 1. Abrí `url`. El admin entra con la contraseña temporal que le mandó Cognito; cualquiera puede
    crear una cuenta de institución o de publicador desde «Ingresar».
-2. Con `datos_demo = true`, esperá la preparación y evaluación automáticas del modelo de
-   demostración. La web informa el estado y actualiza el catálogo; no hay que pulsar «Publicar».
+2. Con `datos_demo = true`, esperá la preparación y evaluación automáticas de los tres modelos
+   iniciales. La web informa el estado y actualiza el catálogo; no hay que pulsar «Publicar».
    El evaluador arranca solo (de 0 a 1 tarea) cuando el procesador encola la evaluación.
 3. En `/modelos`, abrí la ficha del modelo evaluado y subí una radiografía con tu cuenta de institución.
 
@@ -269,11 +269,14 @@ antes de correr `plan`, `aplicar` o `destruir`.
 Con `datos_demo = true`, el constructor ejecuta `python -m tools.demo_assets`: descarga los
 pesos desde una revisión fija y comprueba tamaño y SHA-256, conserva los artefactos existentes
 y prepara y verifica los 200 casos de evaluación. Se publica el manifiesto al final y una marca
-de finalización en el bucket de modelos. No se versiona el binario por falta de licencia
-de redistribución declarada; contrato y manifiesto sí viajan en el paquete.
+de finalización por modelo en el bucket de modelos. El registro `models/catalogo.json`
+identifica Mediscan, DenseNet121 y EfficientNet-B0; los tres se evalúan individualmente
+sobre el mismo conjunto y no forman un ensemble. Contratos, registro y manifiestos viajan
+en el paquete; los pesos se descargan con revisión fija y SHA-256. El original no declara
+licencia y los dos nuevos declaran MIT; no se redistribuyen pesos en Git.
 
 El procesador, después de migrar la base, reutiliza el caso de uso de publicación con un
-candado y una outbox transaccional. Confirma la fila antes de enviar a SQS y conserva modelos
+candado y una outbox transaccional por nombre y versión. Confirma la fila antes de enviar a SQS y conserva modelos
 ya evaluados. El envío se intenta hasta tres veces; un pendiente sin noticias puede reenviarse
 a los 15 minutos. Los errores de evaluación requieren recuperación explícita. SQS mantiene
 su semántica de entrega al menos una vez; no se promete entrega exactamente una vez ante
@@ -281,7 +284,8 @@ una caída entre envío y confirmación. La preparación nunca usa tokens de adm
 
 `datos_demo = false` desactiva preparación y registro sin borrar datos existentes. API Gateway
 permite consultar `GET /api/publico/demo` sin autenticación: solo devuelve estado y, cuando
-corresponde, el ID público del modelo. Las inferencias mantienen sus permisos de Cognito.
+corresponde, los IDs públicos y nombres de los modelos, más cantidades listas, pendientes
+y con error. La disponibilidad parcial no bloquea los modelos sanos. Las inferencias mantienen sus permisos de Cognito.
 
 Para comprobar la finalización desde tu PC (sin credenciales AWS):
 
@@ -292,9 +296,16 @@ python3 tools/esperar_modelo.py --url "<salida api de Terraform>" --timeout 1800
 Si falla, revisá el log del constructor y `/ecs/ateneo/procesador` y `/ecs/ateneo/evaluador`.
 Tras corregir los artefactos, la recuperación del registro puede ejecutarse como tarea puntual
 con la imagen backend, entorno y secreto de la definición del procesador:
-`python -m app.reintentar_demo`. No republica un modelo `ok` ni cancela uno `en_curso`.
+`python -m app.reintentar_demo --nombre torax-rx-densenet121 --version 1.0.0`.
+Solo recupera esa identidad. No republica un modelo `ok` ni cancela uno `en_curso`.
 
 El empaquetado usa una lista explícita y copia bytes a `.build/source-<hash>` antes de generar
 el ZIP; no lee binarios con `file()` ni incluye estados o secretos. Requiere `python3` en la
 máquina que corre Terraform (disponible en CloudShell). La terminación de `apply` no asegura
-que ya haya terminado la evaluación: verificá el endpoint o usá el comando de espera.
+que ya hayan terminado las tres evaluaciones: verificá el endpoint o usá el comando de espera.
+
+El comando de espera verifica los tres por defecto; `--nombre <identidad> --version 1.0.0`
+permite verificar uno. Cada preparación tiene sus marcas bajo `demo/<nombre>/<version>/`;
+las marcas globales de instalaciones anteriores se conservan sin usarse como éxito global.
+Los fallos de un modelo no detienen la preparación/registro de los otros. Las colas y los
+tamaños de Fargate se mantienen; el evaluador procesa las evaluaciones sin forzar simultaneidad.

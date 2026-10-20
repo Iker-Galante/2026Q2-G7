@@ -23,6 +23,8 @@ export interface Manifiesto {
 export interface Modelo {
   id: string;
   nombre: string;
+  nombre_visible: string | null;
+  predeterminado: boolean;
   version: string;
   tipo_estudio: string;
   tarea: string;

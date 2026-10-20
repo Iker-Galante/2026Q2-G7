@@ -27,7 +27,7 @@ export default function Modelos() {
     const lista = publicados.filter(
       (m) =>
         (tipo === null || m.tipo_estudio === tipo) &&
-        (texto === "" || `${m.nombre} ${m.tipo_estudio} ${m.etiquetas.join(" ")}`.toLowerCase().includes(texto)),
+        (texto === "" || `${m.nombre} ${m.nombre_visible ?? ""} ${m.tipo_estudio} ${m.etiquetas.join(" ")}`.toLowerCase().includes(texto)),
     );
     if (orden === "accuracy") {
       // Los evaluados primero, del mejor al peor; el resto conserva el orden de la API (más nuevo primero).
