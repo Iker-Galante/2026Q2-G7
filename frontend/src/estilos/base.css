@@ -107,6 +107,12 @@ body {
   padding: 0;
 }
 
+/* Reserva siempre el lugar del scroll: si no, en las páginas cortas todo lo
+   centrado (la barra incluida) se corre unos píxeles. */
+html {
+  scrollbar-gutter: stable;
+}
+
 body {
   background: var(--fondo);
   color: var(--texto);
