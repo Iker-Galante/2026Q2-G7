@@ -264,8 +264,9 @@ el log del run, aunque `tf.sh` haga el init por su cuenta igual.
 `validar` es el que tiene que estar siempre verde: no depende de credenciales. `plan` avisa en el
 resumen y termina en verde si los secrets están vacíos, en lugar de pintar el PR de rojo. **Para
 la entrega eso no alcanza:** hay que pegar las credenciales del lab antes de abrir el PR y
-comprobar que el job de `plan` tardó minutos y dejó el artifact, y no que salió verde en siete
-segundos sin haber corrido.
+comprobar que el step `Plan` corrió y dejó el artifact con la salida de Terraform. No mires el
+reloj: un plan sin cambios cierra en menos de un minuto. Lo que distingue un plan corrido de uno
+salteado es el artifact, y que el resumen del run traiga la salida de `terraform plan`.
 
 Los workflows no repiten comandos: llaman a `scripts/bootstrap-estado.sh` y `scripts/tf.sh`, los
 mismos que usa una persona en CloudShell. Así el pipeline no puede desalinearse de esta guía.
