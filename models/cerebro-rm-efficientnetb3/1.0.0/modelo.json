@@ -1,0 +1,34 @@
+{
+  "nombre": "cerebro-rm-efficientnetb3",
+  "version": "1.0.0",
+  "tipo_estudio": "cerebro-rm",
+  "tarea": "clasificacion",
+  "origen": "https://huggingface.co/Udit013/brain-tumor-efficientnetb3/blob/31a6602d40ea14a1e012855c4529326d06f9c126/efficientnetb3.onnx",
+  "entrada": {
+    "nombre": "input",
+    "layout": "NHWC",
+    "forma": [
+      1,
+      256,
+      256,
+      3
+    ],
+    "dtype": "float32",
+    "espacio_color": "RGB",
+    "redimension": "estirar",
+    "escala": 1,
+    "media": null,
+    "desvio": null
+  },
+  "salida": {
+    "nombre": "dense_2",
+    "tipo": "probabilidades",
+    "etiquetas": [
+      "glioma",
+      "meningioma",
+      "notumor",
+      "pituitary"
+    ],
+    "positiva": null
+  }
+}

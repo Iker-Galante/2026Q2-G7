@@ -3,8 +3,6 @@ import Paginacion from "../components/Paginacion";
 import TarjetaModelo from "../components/TarjetaModelo";
 import { Enlace } from "../enrutador";
 import { useModelos } from "../hooks/useModelos";
-import EstadoDemo from "../components/EstadoDemo";
-import ModelosListos from "../components/ModelosListos";
 import { lideres, nombreTipo } from "../utilidades/metricas";
 
 const POR_PAGINA = 9;
@@ -13,7 +11,7 @@ type Orden = "accuracy" | "recientes";
 
 /** El catálogo: tarjetas filtrables por tipo de estudio, de a nueve por página. */
 export default function Modelos() {
-  const { publicados, cargando, error, refrescar, demo } = useModelos();
+  const { publicados, cargando, error, refrescar } = useModelos();
   const [busqueda, setBusqueda] = useState("");
   const [tipo, setTipo] = useState<string | null>(null);
   const [orden, setOrden] = useState<Orden>("accuracy");
@@ -57,7 +55,6 @@ export default function Modelos() {
         </Enlace>
       </header>
 
-      <ModelosListos modelos={publicados} />
       <div className="herramientas">
         <input
           type="search"
@@ -95,7 +92,6 @@ export default function Modelos() {
         </label>
       </div>
 
-      <EstadoDemo demo={demo} />
       {error && (
         <div className="caja-error" role="alert">
           No se pudo cargar el catálogo: {error}{" "}
@@ -113,7 +109,7 @@ export default function Modelos() {
         </div>
       ) : visibles.length === 0 ? (
         <div className="vacio">
-          {publicados.length === 0 && demo?.activo && demo.estado !== "ok" ? null : publicados.length === 0 ? (
+          {publicados.length === 0 ? (
             <>
               <p>Todavía no hay modelos publicados.</p>
               <Enlace a="/publicar" className="pildora pildora-oscura">

@@ -421,10 +421,14 @@ cambios, el plan sale vacío.
 
 ## Modelos iniciales y selección en la web
 
-`models/catalogo.json` define los tres modelos incluidos: Mediscan, DenseNet121 y
-EfficientNet-B0. Todos clasifican `torax-rx` en NORMAL/PNEUMONIA, pero cada uno tiene
-identidad, contrato, hash, caché, marca de preparación y evaluación independientes.
-`tools/demo_assets.py` verifica los pesos y prepara un único conjunto reservado compartido.
+`models/catalogo.json` define los cinco modelos incluidos. Mediscan, DenseNet121 y
+EfficientNet-B0 clasifican `torax-rx` en NORMAL/PNEUMONIA; EfficientNetB3 y una CNN propia
+de NareshKumarSekar clasifican `cerebro-rm` en glioma/meningioma/notumor/pituitary. Cada uno
+tiene identidad, contrato, hash, caché, marca de preparación y evaluación independientes.
+`models/conjuntos.json` fija un conjunto reservado por tipo de estudio (origen en Hugging Face,
+split, etiquetas y casos por clase). `tools/demo_assets.py` verifica los pesos y prepara cada
+conjunto una sola vez, aunque lo compartan varios modelos; si falla el de un tipo, los modelos
+del otro siguen. El evaluador no cambia: ya buscaba el conjunto por `tipo_estudio`.
 El procesador recorre el registro, usa candados PostgreSQL deterministas por identidad y
 una outbox transaccional antes de enviar a SQS. Un fallo no interrumpe los demás modelos.
 

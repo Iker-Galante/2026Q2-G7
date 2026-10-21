@@ -8,7 +8,7 @@ valida su contrato y el evaluador, en una subred aislada, lo mide contra el conj
 **consultar un estudio** (la API encola el pedido en SQS, un worker lo toma y el procesador escribe
 el resultado).
 
-Esta rama, `entrega3`, implementa la arquitectura de «Ateneo en AWS 2.0»: ECS Fargate, API Gateway
+Esta versión implementa la arquitectura de «Ateneo en AWS 2.0»: ECS Fargate, API Gateway
 con HTTPS, Cognito, tres colas de SQS y un despliegue completo con `terraform apply`.
 
 - [specs.md](specs.md) · qué hace: flujos, API, contrato del modelo, esquema, criterios de aceptación.
@@ -43,34 +43,39 @@ docker compose up -d --build            # db, minio, sqs, demo-init, migraciones
 etapa de node), así que después de tocar `frontend/` o `backend/` hay que reconstruir:
 `docker compose up -d --build api procesador`.
 
-Abrí <http://localhost:8080>. La primera vez se descargan y verifican los tres modelos
-preentrenados del [registro](models/catalogo.json), todos v1.0.0:
+Abrí <http://localhost:8080>. La primera vez se descargan y verifican los cinco modelos
+preentrenados del [registro](models/catalogo.json), todos v1.0.0, de dos tipos de estudio:
 
-- **Mediscan · Neumonía** (`torax-rx-neumonia`).
-- **DenseNet121 · Neumonía** (`torax-rx-densenet121`).
-- **EfficientNet-B0 · Neumonía** (`torax-rx-efficientnet-b0`).
+- Rx de tórax, NORMAL / PNEUMONIA (`torax-rx`):
+  - **Mediscan · Neumonía** (`torax-rx-neumonia`).
+  - **DenseNet121 · Neumonía** (`torax-rx-densenet121`).
+  - **EfficientNet-B0 · Neumonía** (`torax-rx-efficientnet-b0`).
+- RM de cerebro, glioma / meningioma / notumor / pituitary (`cerebro-rm`):
+  - **EfficientNetB3 · Tumor cerebral** (`cerebro-rm-efficientnetb3`).
+  - **CNN · Tumor cerebral** (`cerebro-rm-cnn`).
 
-Se prepara un único conjunto reservado de 200 casos y cada modelo se publica y evalúa
-independientemente sobre ese mismo conjunto. **No necesitás subir ni publicar un modelo.**
-La web muestra cuántos están listos y actualiza el catálogo; podés usar los que ya terminaron
-mientras se preparan los otros. La primera preparación requiere internet y tarda varios minutos.
+Cada tipo de estudio tiene su conjunto reservado de 200 casos, definido en
+[`models/conjuntos.json`](models/conjuntos.json): se prepara una sola vez y todos los modelos
+de ese tipo se publican y evalúan por separado contra él. **No necesitás subir ni publicar un modelo.**
+Cada modelo aparece en el catálogo apenas se publica, con «Esperando la evaluación», y la web
+se actualiza sola; podés usar los que ya terminaron mientras se preparan los otros. La primera preparación requiere internet y tarda varios minutos.
 `up -d` no espera la evaluación.
 
 ```bash
-# Esperar los tres:
+# Esperar los cinco:
 docker compose run --rm herramientas python tools/esperar_modelo.py --timeout 1800
 # O esperar uno en particular:
 docker compose run --rm herramientas python tools/esperar_modelo.py --nombre torax-rx-densenet121 --version 1.0.0
 ```
 
-El flujo se mantiene: **Modelos → ficha del modelo elegido → subir una radiografía → resultado**.
+El flujo se mantiene: **Modelos → ficha del modelo elegido → subir una imagen del tipo de estudio → resultado**.
 Cada consulta ejecuta solo el modelo elegido; no hay ensemble. El resultado identifica nombre
 y versión. Ateneo evalúa y ejecuta inferencias, no entrena los pesos.
 
 Reiniciar conserva IDs y métricas de los modelos ya evaluados. Los pesos se descargan por
 revisión inmutable y SHA-256 y persisten en S3/MinIO y caché por identidad. Se versionan
-contratos y manifiestos, no los pesos: el original no declara licencia y los dos nuevos
-declaran MIT en su fuente. Ver [models_specs.md](models_specs.md) y los README de cada modelo.
+contratos y manifiestos, no los pesos: Mediscan no declara licencia y los otros cuatro
+declaran MIT. Ver [models_specs.md](models_specs.md) y los README de cada modelo.
 
 Se puede desactivar la preparación con `DATOS_DEMO=false docker compose up -d`; no borra
 modelos existentes ni impide publicar otros.
@@ -107,7 +112,7 @@ No hace falta borrar volúmenes ni modelos. `GET /api/publico/demo` informa solo
 sin credenciales ni etiquetas del conjunto reservado. Informa estado global, cantidades
 esperadas/listas/con error/pendientes y una lista de estados e IDs por modelo inicial.
 Un estado parcial permite seguir usando los modelos listos; no cuenta modelos de usuarios
-como parte de los tres iniciales.
+como parte de los cinco iniciales.
 
 Útiles:
 
@@ -139,7 +144,7 @@ proxy de `/api` al 8080.
 Ver [terraform/README.md](terraform/README.md). En CloudShell:
 
 ```bash
-git clone https://github.com/nnicokim/TP-AWS.git ~/ateneo && cd ~/ateneo && git checkout alineacion/catalogo-publico-y-escalado
+git clone https://github.com/nnicokim/TP-AWS.git ~/ateneo && cd ~/ateneo
 bash terraform/organization/scripts/bootstrap-estado.sh                 # una vez por cuenta
 cp terraform/organization/terraform.tfvars.example terraform/organization/terraform.tfvars   # email_admin y email_alertas
 bash terraform/organization/scripts/tf.sh apply                          # todo: red, base, imágenes, servicios

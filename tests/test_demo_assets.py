@@ -10,19 +10,29 @@ from tools import demo_assets as demo
 from tools.empaquetar_codigo import preparar as empaquetar
 
 
-def conjunto():
+TORAX = demo.conjuntos()["torax-rx"]
+CEREBRO = demo.conjuntos()["cerebro-rm"]
+
+
+def conjunto(spec=TORAX):
     archivos = {}
     filas = []
-    for i in range(200):
+    for i in range(spec.casos):
         nombre = f"{i:03}.png"
-        archivos["casos/" + nombre] = f"imagen-{i}".encode()
-        filas.append({"caso": nombre, "etiqueta": "NORMAL" if i < 100 else "PNEUMONIA"})
+        archivos["casos/" + nombre] = f"{spec.tipo_estudio}-{i}".encode()
+        filas.append({"caso": nombre, "etiqueta": spec.etiquetas[i // spec.por_clase]})
     h = hashlib.sha256()
     for f in filas:
         h.update(demo.sha(archivos["casos/" + f["caso"]]).encode())
     archivos["verdad.jsonl"] = "\n".join(json.dumps(f) for f in filas).encode()
-    archivos["manifiesto.json"] = json.dumps({"casos": 200, "hash": "sha256:" + h.hexdigest()}).encode()
+    archivos["manifiesto.json"] = json.dumps({"casos": spec.casos, "hash": "sha256:" + h.hexdigest()}).encode()
     return archivos
+
+
+def sembrar_conjuntos(s3):
+    for spec in demo.conjuntos().values():
+        for key, datos in conjunto(spec).items():
+            s3.put_object(Bucket="evaluacion", Key=spec.prefijo + key, Body=datos)
 
 
 class S3:
@@ -48,13 +58,26 @@ class S3:
 
 def test_conjunto_incompleto_y_hash():
     archivos = conjunto()
-    assert demo.validar_conjunto(archivos.__getitem__)["casos"] == 200
+    assert demo.validar_conjunto(archivos.__getitem__, TORAX)["casos"] == 200
     archivos["casos/000.png"] = b"alterado"
     with pytest.raises(ValueError, match="hash"):
-        demo.validar_conjunto(archivos.__getitem__)
+        demo.validar_conjunto(archivos.__getitem__, TORAX)
     del archivos["casos/001.png"]
     with pytest.raises(KeyError):
-        demo.validar_conjunto(archivos.__getitem__)
+        demo.validar_conjunto(archivos.__getitem__, TORAX)
+
+
+def test_conjunto_de_cuatro_clases_exige_su_propio_reparto():
+    archivos = conjunto(CEREBRO)
+    assert demo.validar_conjunto(archivos.__getitem__, CEREBRO)["casos"] == 200
+    # 200 casos con otro reparto (o con las clases de otro tipo de estudio) no alcanzan.
+    with pytest.raises(ValueError, match="por clase"):
+        demo.validar_conjunto(archivos.__getitem__, TORAX)
+    filas = [json.loads(v) for v in archivos["verdad.jsonl"].decode().splitlines()]
+    filas[0]["etiqueta"] = "pituitary"
+    archivos["verdad.jsonl"] = "\n".join(json.dumps(f) for f in filas).encode()
+    with pytest.raises(ValueError, match="50 casos por clase"):
+        demo.validar_conjunto(archivos.__getitem__, CEREBRO)
 
 
 def test_idempotencia_y_reparacion_sin_descarga(tmp_path, monkeypatch):
@@ -121,26 +144,50 @@ def test_fallo_de_un_modelo_no_bloquea_los_demas(tmp_path, monkeypatch):
         return {"modelo.onnx": b"pesos", "modelo.json": (md.directorio / "modelo.json").read_bytes()}
     monkeypatch.setattr(demo, "modelo_local", locales)
     s3 = S3()
-    for key, datos in conjunto().items():
-        s3.put_object(Bucket="evaluacion", Key="torax-rx/v1/" + key, Body=datos)
+    sembrar_conjuntos(s3)
     s3.put_object(Bucket="modelos", Key=modelos[0].prefijo + "modelo.onnx", Body=b"alterado")
     s3.escritos.clear()
     resultado = demo.preparar(s3, "modelos", "evaluacion", tmp_path)
-    assert resultado == {modelos[0].clave: False, modelos[1].clave: True, modelos[2].clave: True}
-    assert len(set(rutas_cache)) == 2
+    assert resultado == {md.clave: md is not modelos[0] for md in modelos}
+    assert len(set(rutas_cache)) == len(modelos) - 1
     for md in modelos[1:]:
         assert ("modelos", md.listo) in s3.objetos
     assert all(b != "evaluacion" for b, _ in s3.escritos)
-    # Una segunda ejecución no reescribe el conjunto compartido.
+    # Una segunda ejecución no reescribe los conjuntos compartidos.
     s3.escritos.clear()
     demo.preparar(s3, "modelos", "evaluacion", tmp_path)
     assert all(b != "evaluacion" for b, _ in s3.escritos)
 
 
+def test_un_conjunto_que_falla_no_bloquea_otro_tipo_de_estudio(tmp_path, monkeypatch):
+    modelos = demo.catalogo()
+    llamadas = []
+    def conjunto_que_falla(s3, bucket, cache, spec):
+        llamadas.append(spec.tipo_estudio)
+        if spec.tipo_estudio == "cerebro-rm":
+            raise TimeoutError("Hugging Face no responde")
+        return {"hash": "sha256:torax"}
+    monkeypatch.setattr(demo, "preparar_conjunto", conjunto_que_falla)
+    preparados = []
+    monkeypatch.setattr(demo, "preparar_modelo", lambda s3, b, c, md, h: preparados.append(h))
+    s3 = S3()
+    resultado = demo.preparar(s3, "modelos", "evaluacion", tmp_path)
+    tipos = {md.clave: demo.conjunto_de(md).tipo_estudio for md in modelos}
+    assert resultado == {clave: tipo == "torax-rx" for clave, tipo in tipos.items()}
+    # Una vez por tipo, aunque haya dos modelos de cerebro.
+    assert sorted(llamadas) == ["cerebro-rm", "torax-rx"]
+    assert preparados == ["sha256:torax"] * sum(t == "torax-rx" for t in tipos.values())
+    for md in modelos:
+        if tipos[md.clave] == "cerebro-rm":
+            assert json.loads(s3.objetos["modelos", md.estado])["estado"] == "error"
+
+
 def test_manifiestos_y_contratos_consistentes():
     from ateneo_ml.contrato import ContratoModelo
     modelos = demo.catalogo()
-    assert len(modelos) == 3
+    assert len(modelos) == 5
+    # Cada modelo tiene su conjunto, y cada conjunto registrado lo usa algún modelo.
+    assert {demo.conjunto_de(md).tipo_estudio for md in modelos} == set(demo.conjuntos())
     for md in modelos:
         manifiesto = md.metadata()
         contrato = ContratoModelo.desde_json(md.contrato())

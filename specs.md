@@ -6,7 +6,7 @@
 > aislada → dataset reservado → métricas en la base)— con un modelo ONNX bajado de internet que
 > subimos a mano a S3, y un dataset público que hace de "conjunto reservado".
 
-> **Entrega 3 (rama `entrega3`).** Lo que cambia es el transporte, no el producto: la tabla
+> **Entrega 3.** Lo que cambia es el transporte, no el producto: la tabla
 > `trabajo` deja de ser la cola (D4, D5) y los pedidos viajan por SQS (`inferencias`,
 > `evaluaciones`); worker y evaluador ya no escriben en la base ni se los llama por HTTP, y un
 > procesador aplica los resultados (D6). Hay login con Cognito. Ver [architecture.md](architecture.md).
@@ -474,7 +474,7 @@ apagado, el trabajo hace 3 intentos y termina en `error` sin colgar nada.
    `error` al tercero; al volver a subir el grupo, un trabajo nuevo se procesa. Nada queda colgado.
 7. Volver a apretar **Publicar** sobre un modelo `en_curso` responde `409`; sobre uno `ok` lo
    re-evalúa.
-8. Toda la aplicación corre en local con `docker compose up` (Postgres + MinIO) y los tres
+8. Toda la aplicación corre en local con `docker compose up` (Postgres + MinIO) y los cuatro
    servicios en venv, sin credenciales de AWS.
 
 ## 14. Fuera de alcance (evolución)

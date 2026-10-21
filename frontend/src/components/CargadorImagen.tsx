@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { DragEvent } from "react";
 import { tamanoLegible } from "../utilidades/formato";
+import { nombreTipo } from "../utilidades/metricas";
 
 const TIPOS_PERMITIDOS = ["image/png", "image/jpeg"];
 const TAMANO_MAXIMO = 20 * 1024 * 1024; // 20 MB, igual que MAX_BYTES_ESTUDIO en el backend
@@ -117,7 +118,7 @@ export default function CargadorImagen({
             {archivo.name}
           </span>
           <span className="suave">{tamanoLegible(archivo.size)}</span>
-          {tipoEstudio && <span className="chip">{tipoEstudio}</span>}
+          {tipoEstudio && <span className="chip">{nombreTipo(tipoEstudio)}</span>}
           <button type="button" className="pildora pildora-borde chica" onClick={onQuitar} disabled={deshabilitado}>
             Quitar
           </button>

@@ -60,6 +60,25 @@ class ModeloDemo:
         return json.loads((self.directorio / "modelo.json").read_text())
 
 
+@dataclass(frozen=True)
+class ConjuntoDemo:
+    """El conjunto reservado de un tipo de estudio: todos sus modelos se miden contra él."""
+    tipo_estudio: str
+    version: str
+    hf: str
+    split: str
+    etiquetas: tuple[str, ...]
+    por_clase: int
+
+    @property
+    def prefijo(self):
+        return f"{self.tipo_estudio}/{self.version}/"
+
+    @property
+    def casos(self):
+        return self.por_clase * len(self.etiquetas)
+
+
 def catalogo() -> list[ModeloDemo]:
     modelos = [ModeloDemo(**m) for m in json.loads((MODELS_DIR / "catalogo.json").read_text())]
     if not modelos or len({m.clave for m in modelos}) != len(modelos):
@@ -71,6 +90,32 @@ def catalogo() -> list[ModeloDemo]:
         if m.manifiesto != f"{m.clave}/manifest.json":
             raise ValueError("Ruta de manifiesto inválida")
     return modelos
+
+
+def conjuntos() -> dict[str, ConjuntoDemo]:
+    registro = {}
+    for c in json.loads((MODELS_DIR / "conjuntos.json").read_text()):
+        conjunto = ConjuntoDemo(**{**c, "etiquetas": tuple(c["etiquetas"])})
+        for segmento in (conjunto.tipo_estudio, conjunto.version):
+            if not segmento or segmento in (".", "..") or "/" in segmento:
+                raise ValueError("Identidad de conjunto inválida")
+        if conjunto.tipo_estudio in registro:
+            raise ValueError("Dos conjuntos para el mismo tipo de estudio")
+        if len(set(conjunto.etiquetas)) != len(conjunto.etiquetas) or len(conjunto.etiquetas) < 2 or conjunto.por_clase < 1:
+            raise ValueError("Conjunto sin clases suficientes o con etiquetas repetidas")
+        registro[conjunto.tipo_estudio] = conjunto
+    return registro
+
+
+def conjunto_de(modelo: ModeloDemo) -> ConjuntoDemo:
+    contrato = modelo.contrato()
+    conjunto = conjuntos().get(contrato["tipo_estudio"])
+    if conjunto is None:
+        raise ValueError(f"No hay conjunto de demo para el tipo de estudio {contrato['tipo_estudio']}")
+    # El evaluador rechaza un conjunto con etiquetas que el modelo no conoce: mejor saberlo acá.
+    if not set(conjunto.etiquetas) <= set(contrato["salida"]["etiquetas"]):
+        raise ValueError(f"El conjunto {conjunto.prefijo} tiene etiquetas que {modelo.clave} no conoce")
+    return conjunto
 
 
 def seleccionar(nombre: str, version: str) -> ModeloDemo:
@@ -129,17 +174,18 @@ def modelo_local(cache: Path, modelo: ModeloDemo) -> dict[str, bytes]:
     return salida
 
 
-def validar_conjunto(leer_archivo) -> dict:
+def validar_conjunto(leer_archivo, conjunto: ConjuntoDemo) -> dict:
     """Comprueba etiquetas, cantidad, archivos y hash real, no solo el manifiesto."""
     m = json.loads(leer_archivo("manifiesto.json"))
     filas = [json.loads(linea) for linea in leer_archivo("verdad.jsonl").decode().splitlines() if linea.strip()]
     nombres = [f["caso"] for f in filas]
-    if len(filas) != 200 or m["casos"] != 200 or len(set(nombres)) != 200:
-        raise ValueError("El conjunto de demo debe contener 200 casos únicos")
+    esperados = conjunto.casos
+    if len(filas) != esperados or m["casos"] != esperados or len(set(nombres)) != esperados:
+        raise ValueError(f"El conjunto de demo debe contener {esperados} casos únicos")
     if any(n != Path(n).name or not n.endswith(".png") for n in nombres):
         raise ValueError("Nombre de caso inválido")
-    if any(sum(f["etiqueta"] == c for f in filas) != 100 for c in ("NORMAL", "PNEUMONIA")):
-        raise ValueError("Se requieren 100 casos por clase")
+    if any(sum(f["etiqueta"] == c for f in filas) != conjunto.por_clase for c in conjunto.etiquetas):
+        raise ValueError(f"Se requieren {conjunto.por_clase} casos por clase")
     h = hashlib.sha256()
     for nombre in sorted(nombres):
         datos = leer_archivo("casos/" + nombre)
@@ -151,34 +197,34 @@ def validar_conjunto(leer_archivo) -> dict:
     return m
 
 
-def preparar_conjunto(s3, bucket_evaluacion: str, cache: Path) -> dict:
+def preparar_conjunto(s3, bucket_evaluacion: str, cache: Path, conjunto: ConjuntoDemo) -> dict:
     def remoto(nombre):
-        datos = leer(s3, bucket_evaluacion, "torax-rx/v1/" + nombre)
+        datos = leer(s3, bucket_evaluacion, conjunto.prefijo + nombre)
         if datos is None:
             raise FileNotFoundError(nombre)
         return datos
 
     try:
-        conjunto = validar_conjunto(remoto)
-        log.info("conjunto remoto íntegro: se conserva sin descargar de nuevo")
+        manifiesto = validar_conjunto(remoto, conjunto)
+        log.info("conjunto remoto %s íntegro: se conserva sin descargar de nuevo", conjunto.prefijo)
     except (FileNotFoundError, ValueError, KeyError, TypeError):
-        carpeta = cache / "torax-rx" / "v1"
+        carpeta = cache / conjunto.tipo_estudio / conjunto.version
         try:
-            conjunto = validar_conjunto(lambda nombre: (carpeta / nombre).read_bytes())
+            manifiesto = validar_conjunto(lambda nombre: (carpeta / nombre).read_bytes(), conjunto)
         except (OSError, ValueError, KeyError, TypeError):
             import subprocess
             import sys
             subprocess.run([sys.executable, "-m", "tools.preparar_conjunto", "--hf",
-                            "hf-vision/chest-xray-pneumonia", "--split", "test", "--por-clase", "100",
+                            conjunto.hf, "--split", conjunto.split, "--por-clase", str(conjunto.por_clase),
                             "--sin-optimizar", "--salida", str(carpeta)], check=True)
-            conjunto = validar_conjunto(lambda nombre: (carpeta / nombre).read_bytes())
+            manifiesto = validar_conjunto(lambda nombre: (carpeta / nombre).read_bytes(), conjunto)
         # El manifiesto siempre se publica al final.
-        s3.delete_object(Bucket=bucket_evaluacion, Key="torax-rx/v1/manifiesto.json")
+        s3.delete_object(Bucket=bucket_evaluacion, Key=conjunto.prefijo + "manifiesto.json")
         filas = [json.loads(v) for v in (carpeta / "verdad.jsonl").read_text().splitlines()]
         for nombre in [*("casos/" + f["caso"] for f in filas), "verdad.jsonl", "manifiesto.json"]:
-            s3.upload_file(str(carpeta / nombre), bucket_evaluacion, "torax-rx/v1/" + nombre)
-        validar_conjunto(remoto)
-    return conjunto
+            s3.upload_file(str(carpeta / nombre), bucket_evaluacion, conjunto.prefijo + nombre)
+        validar_conjunto(remoto, conjunto)
+    return manifiesto
 
 
 def preparar_modelo(s3, bucket: str, cache: Path, modelo: ModeloDemo, conjunto_hash: str) -> None:
@@ -215,17 +261,20 @@ def marcar_error(s3, bucket, modelo, estado="error"):
 
 
 def preparar(s3, bucket_modelos: str, bucket_evaluacion: str, cache: Path, modelos=None, final=True) -> dict[str, bool]:
+    """Cada conjunto se prepara una sola vez aunque lo compartan varios modelos. Un fallo, de
+    conjunto o de modelo, deja afuera solo a los modelos que dependen de él."""
     modelos = catalogo() if modelos is None else modelos
-    try:
-        conjunto = preparar_conjunto(s3, bucket_evaluacion, cache)
-    except Exception:
-        for modelo in modelos:
-            marcar_error(s3, bucket_modelos, modelo, "error" if final else "preparando")
-        raise
+    hashes: dict[str, str | None] = {}
     resultado = {}
     for modelo in modelos:
         try:
-            preparar_modelo(s3, bucket_modelos, cache, modelo, conjunto["hash"])
+            conjunto = conjunto_de(modelo)
+            if conjunto.tipo_estudio not in hashes:
+                hashes[conjunto.tipo_estudio] = None  # si falla, no se reintenta en esta pasada
+                hashes[conjunto.tipo_estudio] = preparar_conjunto(s3, bucket_evaluacion, cache, conjunto)["hash"]
+            if hashes[conjunto.tipo_estudio] is None:
+                raise ValueError(f"El conjunto {conjunto.prefijo} no se pudo preparar en esta pasada")
+            preparar_modelo(s3, bucket_modelos, cache, modelo, hashes[conjunto.tipo_estudio])
             resultado[modelo.clave] = True
         except Exception:
             log.exception("falló la preparación de %s; continúo con los otros", modelo.clave)
@@ -253,7 +302,7 @@ def main() -> None:
             if not pendientes:
                 return
         except Exception:
-            log.exception("falló el conjunto compartido (intento %s/3)", intento + 1)
+            log.exception("falló la preparación de la demo (intento %s/3)", intento + 1)
         if intento < 2:
             time.sleep(10)
     raise SystemExit("No se pudieron preparar todos los modelos iniciales; revisar los estados individuales")

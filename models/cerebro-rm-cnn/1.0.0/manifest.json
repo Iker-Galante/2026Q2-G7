@@ -1,0 +1,19 @@
+{
+  "nombre": "cerebro-rm-cnn",
+  "version": "1.0.0",
+  "revision": "0323f6ee650bfa2b0ef5d3352e15971ea0d6c5e3",
+  "origen": "https://huggingface.co/spaces/NareshKumarSekar/BrainTumor",
+  "licencia": "MIT (declarada por el autor)",
+  "preprocesamiento": "https://huggingface.co/spaces/NareshKumarSekar/BrainTumor/blob/0323f6ee650bfa2b0ef5d3352e15971ea0d6c5e3/app.py",
+  "archivos": {
+    "modelo.onnx": {
+      "url": "https://huggingface.co/spaces/NareshKumarSekar/BrainTumor/resolve/0323f6ee650bfa2b0ef5d3352e15971ea0d6c5e3/brain_tumor_model.onnx",
+      "sha256": "98e703668a69a08a3ed0b5c2b047c468f74e914b84b39d03abd1e0d24b0e3ab7",
+      "bytes": 76661663
+    },
+    "modelo.json": {
+      "sha256": "5290b59d0c40c3afa6aef184810f3525d25c20a25f74c3abcc890f032f57e1b7",
+      "bytes": 723
+    }
+  }
+}

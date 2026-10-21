@@ -64,6 +64,14 @@ jobs:
         if: steps.credenciales.outputs.hay == 'true'
         run: bash terraform/organization/scripts/bootstrap-estado.sh
 
+      # Explícitos aunque tf.sh haga el init solo: este es el workflow que despliega, así que el
+      # ciclo init → validate → apply tiene que poder leerse en el log del run.
+      - name: Init
+        run: bash terraform/organization/scripts/tf.sh init -input=false -backend-config=backend.hcl -no-color
+
+      - name: Validate
+        run: bash terraform/organization/scripts/tf.sh validate -no-color
+
       # Tarda unos quince minutos la primera vez: el constructor arma las imágenes dentro de la
       # cuenta y el apply las espera antes de crear los servicios de ECS. El runner de Ubuntu ya
       # trae el CLI de AWS, que es lo que usan scripts/buckets.sh y esa espera.

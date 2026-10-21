@@ -35,7 +35,12 @@ export function tonoDe(tipo: string): number {
   return 160 + (h % 70);
 }
 
-/** "torax-rx" → "Tórax RX" no se puede adivinar; al menos "torax rx". */
+/** Los tipos del catálogo inicial tienen nombre propio; el resto, al menos "torax rx". */
+const TIPOS: Record<string, string> = {
+  "torax-rx": "Tórax · RX",
+  "cerebro-rm": "Cerebro · RM",
+};
+
 export function nombreTipo(tipo: string): string {
-  return tipo.replace(/[-_]+/g, " ");
+  return TIPOS[tipo] ?? tipo.replace(/[-_]+/g, " ");
 }

@@ -39,8 +39,9 @@ sobre `terraform/modules`).
 2. Crea la red, la base, los buckets, las colas, Cognito y API Gateway; sube el paquete al bucket
    de artefactos.
 3. Lanza el constructor: una `t3.large` en la capa de aplicación que construye las imágenes
-   `backend` y `ml`, las sube a ECR, sube el sitio al bucket web y, con `datos_demo`, siembra el
-   los tres modelos iniciales y un conjunto compartido de 200 casos de Hugging Face. Después se apaga.
+   `backend` y `ml`, las sube a ECR, sube el sitio al bucket web y, con `datos_demo`, siembra
+   los cinco modelos iniciales y un conjunto de 200 casos de Hugging Face por tipo de estudio
+   (Rx de tórax y RM de cerebro). Después se apaga.
 4. Espera las imágenes (unos diez minutos la primera vez) y crea los servicios de ECS.
 5. Imprime la dirección del sitio y el admin inicial. La verificación es abrir el sitio y entrar.
 
@@ -49,12 +50,12 @@ nuevas y ECS cambia las tareas de a poco. **Sin cambios, el plan sale vacío.**
 
 ## Primer despliegue
 
-En CloudShell, parado en el clon. El branch es `alineacion/catalogo-publico-y-escalado`: es el
-único que trae la creación de los buckets por CLI, y sin eso el apply muere en el Learner Lab (más
-abajo, en las restricciones). Cuando ese branch se integre a `entrega3`, los dos sirven.
+En CloudShell, parado en el clon de `main`, que ya trae todo: la creación de los buckets por CLI
+(sin eso el apply muere en el Learner Lab, más abajo en las restricciones) y los cinco modelos de
+los dos tipos de estudio.
 
 ```bash
-git clone https://github.com/nnicokim/TP-AWS.git ~/ateneo && cd ~/ateneo && git checkout alineacion/catalogo-publico-y-escalado
+git clone https://github.com/nnicokim/TP-AWS.git ~/ateneo && cd ~/ateneo
 bash terraform/organization/scripts/bootstrap-estado.sh            # una vez por cuenta: bucket del estado + backend.hcl
 cp terraform/organization/terraform.tfvars.example terraform/organization/terraform.tfvars
 nano terraform/organization/terraform.tfvars                       # email_admin y email_alertas
@@ -66,10 +67,10 @@ Después:
 
 1. Abrí `url`. El admin entra con la contraseña temporal que le mandó Cognito; cualquiera puede
    crear una cuenta de institución o de publicador desde «Ingresar».
-2. Con `datos_demo = true`, esperá la preparación y evaluación automáticas de los tres modelos
+2. Con `datos_demo = true`, esperá la preparación y evaluación automáticas de los cinco modelos
    iniciales. La web informa el estado y actualiza el catálogo; no hay que pulsar «Publicar».
    El evaluador arranca solo (de 0 a 1 tarea) cuando el procesador encola la evaluación.
-3. En `/modelos`, abrí la ficha del modelo evaluado y subí una radiografía con tu cuenta de institución.
+3. En `/modelos`, abrí la ficha del modelo evaluado y subí una imagen de su tipo de estudio con tu cuenta de institución.
 
 Si pusiste `email_alertas`, AWS manda una confirmación de SNS que hay que aceptar una vez.
 
@@ -99,6 +100,23 @@ este, con el sitio en S3 (cambia también la decisión 11).
   (`aws cognito-idp admin-create-user`); los admins, con `email_admin`.
 - **Qué guarda el navegador.** Access e id token, una hora. Sin refresh token en la URL: al
   vencer, «Ingresar» vuelve a pasar por Cognito, que recuerda la sesión y no pide la contraseña.
+
+## Correcciones respecto de la Entrega 2
+
+La devolución formal de la E2 todavía no llegó. Lo que sigue son las ocho inconsistencias que
+encontramos nosotros auditando la entrega anterior antes de diseñar la 2.0, y qué las corrige en
+este código. Cuando llegue la devolución se agrega acá lo que falte.
+
+| # | Qué estaba mal en la E2 | Qué lo corrige |
+|---|-------------------------|----------------|
+| 1 | `specs.md` §14 daba la subida del ONNX desde la web como fuera de alcance, pero ya estaba implementada | La spec la describe como parte del alcance: es la pantalla `/publicar`, con URL prefirmada contra el bucket de modelos |
+| 2 | `architecture.md` §9 le pasaba `BUCKET_MODELOS` al worker, que no lo necesita | El worker recibe solo `MODELOS_DIR=/mnt/modelos` (`ecs.tf`): lee los pesos de la caché de EFS y no habla con el bucket. La variable quedó en api, procesador y evaluador, que sí la usan |
+| 3 | `generar-env.sh` escribía el usuario `ateneo`, y en la cuenta era `atenteo` | No hay más scripts de entorno a mano: `terraform apply` arma todo y los nombres salen de `locals.tf` y del sufijo guardado en el estado, nunca escritos dos veces |
+| 4 | `apagar.sh` no borraba los ALB, que siguieron cobrando | `terraform destroy` borra lo que creó, balanceador incluido, y `destruir.yml` lo corre desde el pipeline |
+| 5 | En la cuenta, `inf-b` y `data-b` colgaban de la tabla de ruteo principal | Una tabla de ruteo por capa y una asociación explícita por subred (`red.tf`): ninguna subred queda en la principal por omisión |
+| 6 | El diagrama tenía una flecha worker → RDS, dibujaba el standby de RDS y el EFS fuera de las zonas | El worker no tiene credenciales de base ni grupo de seguridad hacia ella; RDS es Single-AZ y no tiene standby; el EFS tiene un mount target por zona (`efs.tf`). El diagrama nuevo se rehace sobre este código |
+| 7 | El artifact de arquitectura decía «cuatro buckets» y eran cinco | Cinco, enumerados arriba y en `local.buckets`: web, modelos, estudios, evaluación y artefactos |
+| 8 | La AMI dorada no era reproducible desde el repositorio | No hay más AMI dorada: las dos imágenes se construyen dentro de la cuenta a partir del código del repositorio y la etiqueta es su hash (`imagenes.tf`). Mismo commit, misma imagen |
 
 ## Restricciones del Learner Lab que este código respeta
 
@@ -205,14 +223,14 @@ proveedores, así que esa línea es lo único que garantiza que la cátedra baje
 
 | Meta-argumento | Usos | Un ejemplo |
 |----------------|------|------------|
-| `for_each` | 33 | Las once subredes salen de un mapa de capas (`red.tf`); los cuatro servicios de Fargate, de `local.servicios` (`ecs.tf`) |
+| `for_each` | 32 | Las once subredes salen de un mapa de capas (`red.tf`); los cuatro servicios de Fargate, de `local.servicios` (`ecs.tf`) |
 | `depends_on` | 15 | Cada configuración de bucket espera a `terraform_data.buckets`, porque los buckets no los crea el proveedor (`s3.tf`) |
 | `count` | 6 | La suscripción de SNS existe solo si hay un mail de alertas (`alertas.tf`) |
 | `lifecycle` | 2 | `ignore_changes` en el `desired_count` de los servicios, que lo maneja el escalado (`ecs.tf`), y en la AMI del constructor, que cambia sola cada tanto (`imagenes.tf`) |
 
 ### Funciones
 
-26 distintas. Las que hacen algo que se nota:
+27 distintas. Las que hacen algo que se nota:
 
 | Función | Para qué |
 |---------|----------|
@@ -222,7 +240,7 @@ proveedores, así que esa línea es lo único que garantiza que la cátedra baje
 | `merge` | Las once subredes, aplanando el mapa de capas; y los cinco endpoints, juntando el gateway con los cuatro de interfaz (`red.tf`) |
 | `can`, `regex` | Las validaciones de `modules/cola`: un nombre que no sirve para una cola de SQS falla en el plan, no en el apply |
 | `abspath` | La ruta del script de los buckets y la raíz del repositorio, que no dependen de desde dónde se corra |
-| `toset`, `keys`, `flatten`, `distinct`, `sort`, `concat`, `length`, `contains`, `strcontains`, `split`, `join`, `replace`, `upper`, `endswith`, `file` | El resto, repartidas |
+| `toset`, `keys`, `flatten`, `distinct`, `sort`, `concat`, `length`, `contains`, `strcontains`, `split`, `join`, `replace`, `upper`, `endswith`, `tostring`, `urlencode` | El resto, repartidas |
 
 Hay además 11 variables y 10 salidas en el root, y 5 bloques `validation`.
 
@@ -234,12 +252,21 @@ no, porque las del Learner Lab vencen cada sesión:
 | Workflow | Cuándo corre | Toca AWS | Qué hace |
 |----------|--------------|----------|----------|
 | `validar.yml` | solo, en cada push y cada PR | no | `fmt -check`, `init -backend=false`, `validate`, `test` |
-| `plan.yml` | en el PR hacia `main`, y a mano | sí | bucket del estado y `tf.sh plan`; guarda el plan como artifact |
-| `aplicar.yml` | **solo a mano**, escribiendo «aplicar» | sí | `tf.sh apply`; imprime el sitio y el admin inicial |
+| `plan.yml` | en el PR hacia `main`, y a mano | sí | bucket del estado, `init` y `plan`; guarda el plan como artifact |
+| `aplicar.yml` | **solo a mano**, escribiendo «aplicar» | sí | bucket del estado, `init`, `validate` y `apply`; imprime el sitio y el admin inicial |
 | `destruir.yml` | **solo a mano**, escribiendo «destruir» | sí | `tf.sh destroy` |
 
+El ciclo `init` → `validate` → `plan` → `apply` que pide la entrega queda así: `validar.yml` hace
+`init` y `validate` sin cuenta (es el chequeo de siempre), `plan.yml` hace `init` y `plan` contra
+la cuenta, y `aplicar.yml` hace `init`, `validate` y `apply`. Cada uno es un step con su nombre en
+el log del run, aunque `tf.sh` haga el init por su cuenta igual.
+
 `validar` es el que tiene que estar siempre verde: no depende de credenciales. `plan` avisa en el
-resumen y termina en verde si los secrets están vacíos, en lugar de pintar el PR de rojo.
+resumen y termina en verde si los secrets están vacíos, en lugar de pintar el PR de rojo. **Para
+la entrega eso no alcanza:** hay que pegar las credenciales del lab antes de abrir el PR y
+comprobar que el step `Plan` corrió y dejó el artifact con la salida de Terraform. No mires el
+reloj: un plan sin cambios cierra en menos de un minuto. Lo que distingue un plan corrido de uno
+salteado es el artifact, y que el resumen del run traiga la salida de `terraform plan`.
 
 Los workflows no repiten comandos: llaman a `scripts/bootstrap-estado.sh` y `scripts/tf.sh`, los
 mismos que usa una persona en CloudShell. Así el pipeline no puede desalinearse de esta guía.
@@ -270,10 +297,11 @@ Con `datos_demo = true`, el constructor ejecuta `python -m tools.demo_assets`: d
 pesos desde una revisión fija y comprueba tamaño y SHA-256, conserva los artefactos existentes
 y prepara y verifica los 200 casos de evaluación. Se publica el manifiesto al final y una marca
 de finalización por modelo en el bucket de modelos. El registro `models/catalogo.json`
-identifica Mediscan, DenseNet121 y EfficientNet-B0; los tres se evalúan individualmente
-sobre el mismo conjunto y no forman un ensemble. Contratos, registro y manifiestos viajan
-en el paquete; los pesos se descargan con revisión fija y SHA-256. El original no declara
-licencia y los dos nuevos declaran MIT; no se redistribuyen pesos en Git.
+identifica los cinco: Mediscan, DenseNet121 y EfficientNet-B0 para `torax-rx`, y EfficientNetB3
+y una CNN para `cerebro-rm`. Cada uno se evalúa individualmente contra el conjunto reservado de
+su tipo de estudio, y no forman un ensemble. Contratos, registro y manifiestos viajan
+en el paquete; los pesos se descargan con revisión fija y SHA-256. Mediscan no declara
+licencia y los otros cuatro declaran MIT; no se redistribuyen pesos en Git.
 
 El procesador, después de migrar la base, reutiliza el caso de uso de publicación con un
 candado y una outbox transaccional por nombre y versión. Confirma la fila antes de enviar a SQS y conserva modelos
@@ -302,9 +330,9 @@ Solo recupera esa identidad. No republica un modelo `ok` ni cancela uno `en_curs
 El empaquetado usa una lista explícita y copia bytes a `.build/source-<hash>` antes de generar
 el ZIP; no lee binarios con `file()` ni incluye estados o secretos. Requiere `python3` en la
 máquina que corre Terraform (disponible en CloudShell). La terminación de `apply` no asegura
-que ya hayan terminado las tres evaluaciones: verificá el endpoint o usá el comando de espera.
+que ya hayan terminado las cinco evaluaciones: verificá el endpoint o usá el comando de espera.
 
-El comando de espera verifica los tres por defecto; `--nombre <identidad> --version 1.0.0`
+El comando de espera verifica los cinco por defecto; `--nombre <identidad> --version 1.0.0`
 permite verificar uno. Cada preparación tiene sus marcas bajo `demo/<nombre>/<version>/`;
 las marcas globales de instalaciones anteriores se conservan sin usarse como éxito global.
 Los fallos de un modelo no detienen la preparación/registro de los otros. Las colas y los

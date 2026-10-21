@@ -1,7 +1,6 @@
 import { useMemo } from "react";
 import { Flecha } from "../components/Navegacion";
 import TarjetaModelo from "../components/TarjetaModelo";
-import EstadoDemo from "../components/EstadoDemo";
 import { Enlace } from "../enrutador";
 import { useModelos } from "../hooks/useModelos";
 import { porcentaje } from "../utilidades/formato";
@@ -70,9 +69,7 @@ export default function Inicio() {
             </p>
             {evaluados.length > 0 && (
               <p className="vidrio-disponibilidad">
-                {demo?.activo && demo.listos < demo.esperados
-                  ? `${demo.listos} de ${demo.esperados} modelos iniciales listos`
-                  : `${evaluados.length} ${evaluados.length === 1 ? "modelo evaluado disponible" : "modelos evaluados disponibles"}`}
+                {evaluados.length} {evaluados.length === 1 ? "modelo evaluado disponible" : "modelos evaluados disponibles"}
               </p>
             )}
             <div className="acciones">
@@ -117,7 +114,6 @@ export default function Inicio() {
           </h2>
         </header>
 
-        <EstadoDemo demo={demo} />
         {destacados.length > 0 ? (
           <div className="grilla-modelos">
             {destacados.map((m) => (
@@ -126,7 +122,7 @@ export default function Inicio() {
           </div>
         ) : (
           <div className="vacio">
-            {(!demo?.activo || demo.estado === "ok") && <p>Todavía no hay modelos evaluados.</p>}
+            <p>Todavía no hay modelos publicados.</p>
           </div>
         )}
 
