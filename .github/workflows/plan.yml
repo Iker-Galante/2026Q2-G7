@@ -57,6 +57,12 @@ jobs:
         if: steps.credenciales.outputs.hay == 'true'
         run: bash terraform/organization/scripts/bootstrap-estado.sh
 
+      # Explícito aunque tf.sh ya lo haría solo: el ciclo que pide la entrega es init → validate →
+      # plan → apply, y cada etapa tiene que poder leerse en el log del run.
+      - name: Init
+        if: steps.credenciales.outputs.hay == 'true'
+        run: bash terraform/organization/scripts/tf.sh init -input=false -backend-config=backend.hcl -no-color
+
       - name: Plan
         if: steps.credenciales.outputs.hay == 'true'
         shell: bash
