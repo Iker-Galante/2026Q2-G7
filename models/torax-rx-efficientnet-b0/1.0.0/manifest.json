@@ -1,0 +1,19 @@
+{
+  "nombre": "torax-rx-efficientnet-b0",
+  "version": "1.0.0",
+  "revision": "d30e6fe12acc63248e0e669725e2d5944b541df1",
+  "origen": "https://huggingface.co/ZubaerNiloy/pneumonia-ensemble-onnx",
+  "licencia": "MIT (declarada por el autor)",
+  "preprocesamiento": "https://huggingface.co/spaces/ZubaerNiloy/pneumonia-detection/blob/b916bd6697c07628967c8eb0f12e2c33a18d1b17/index.html",
+  "archivos": {
+    "modelo.onnx": {
+      "url": "https://huggingface.co/ZubaerNiloy/pneumonia-ensemble-onnx/resolve/d30e6fe12acc63248e0e669725e2d5944b541df1/efficientnet_b0.onnx",
+      "sha256": "09ce0d3d0a1ed9c7eb42b421558f340abde85ae795fbbb20c21fd3c254b24da2",
+      "bytes": 18646118
+    },
+    "modelo.json": {
+      "sha256": "9583c05c8821763cb5d3bb930e1174fec19d2a6805e4a3f9010dc48887ef1201",
+      "bytes": 790
+    }
+  }
+}

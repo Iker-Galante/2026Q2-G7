@@ -1,0 +1,19 @@
+{
+  "nombre": "cerebro-rm-efficientnetb3",
+  "version": "1.0.0",
+  "revision": "31a6602d40ea14a1e012855c4529326d06f9c126",
+  "origen": "https://huggingface.co/Udit013/brain-tumor-efficientnetb3",
+  "licencia": "MIT (declarada por el autor)",
+  "preprocesamiento": "https://github.com/Udit013/Brain_Tumor_Classificatioin/blob/80c0b951b048c14fe4fbad187ca97a3770357cce/src/btc/config.py",
+  "archivos": {
+    "modelo.onnx": {
+      "url": "https://huggingface.co/Udit013/brain-tumor-efficientnetb3/resolve/31a6602d40ea14a1e012855c4529326d06f9c126/efficientnetb3.onnx",
+      "sha256": "320b1ef648f3da5216f6ee0374349324b3cb00a76bebf7dbd1c3796e6155991c",
+      "bytes": 46448207
+    },
+    "modelo.json": {
+      "sha256": "019e1b54703c8194a50e1ddcefa0a79610507660a028ca31621f57b7493cbb5c",
+      "bytes": 720
+    }
+  }
+}

@@ -1,0 +1,8 @@
+# Para correr los tests y las herramientas en tu máquina (python -m venv .venv && pip install -r requirements-dev.txt)
+-r backend/requirements.txt
+onnxruntime==1.18.0
+onnx==1.16.2
+numpy<2
+pillow
+pydicom
+pytest==8.3.4

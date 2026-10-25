@@ -1,0 +1,111 @@
+#!/bin/bash
+# El constructor (decisión 06), generado por Terraform. Construye las dos imágenes con el código
+# del repositorio, las sube a ECR con el hash del código como etiqueta, sube el sitio al bucket
+# web y, con datos_demo, siembra el modelo y el conjunto de demostración. Después se apaga.
+# El log queda en s3://${bucket_artefactos}/logs/constructor-${version}.log
+set -euxo pipefail
+exec > >(tee -a /var/log/constructor.log) 2>&1
+
+subir_log_y_apagar() {
+  aws s3 cp /var/log/constructor.log "s3://${bucket_artefactos}/logs/constructor-${version}.log" --region ${region} || true
+  shutdown -h now
+}
+trap subir_log_y_apagar EXIT
+
+dnf install -y docker unzip
+systemctl start docker
+
+mkdir -p /opt/ateneo && cd /opt/ateneo
+aws s3 cp "s3://${bucket_artefactos}/${clave_codigo}" codigo.zip --region ${region}
+unzip -q -o codigo.zip
+
+# El registro resuelve por el DNS privado del endpoint ecr.dkr, y `docker login` no reintenta: un
+# solo timeout abortaba el constructor entero (set -e) y la instancia se apagaba sin imagenes.
+# Asi que primero se espera a que el registro responda. /v2/ sin credenciales devuelve 401, que
+# para curl es una respuesta: alcanza para saber que se llega.
+#
+# Si no entra, el log dice a que IP resolvio el nombre y si el 443 abre, que es lo que distingue
+# los tres casos posibles: el DNS privado no resolvio (IP publica y sin NAT), resolvio al endpoint
+# pero el grupo de seguridad o la ruta no dejan pasar (no abre), o el endpoint no esta listo.
+diagnostico_registro() {
+  echo "--- diagnostico de ${registro}"
+  echo "resuelve a: $(getent hosts ${registro} || echo 'NO RESUELVE')"
+  if timeout 10 bash -c "cat < /dev/null > /dev/tcp/${registro}/443" 2>/dev/null; then
+    echo "443: abre"
+  else
+    echo "443: NO abre"
+  fi
+  echo "resolv.conf: $(grep -h nameserver /etc/resolv.conf | tr '
+' ' ')"
+}
+
+for intento in $(seq 1 15); do
+  if curl -s -o /dev/null --max-time 10 "https://${registro}/v2/"; then
+    echo "el registro responde (intento $intento)"
+    break
+  fi
+  if [ "$intento" = 15 ]; then
+    echo "el registro no respondio en cinco minutos" >&2
+    diagnostico_registro
+    exit 1
+  fi
+  echo "el registro todavia no responde (intento $intento), reintento en 20s"
+  sleep 20
+done
+
+# Que el registro responda una vez no alcanza: con el endpoint recien creado, el login siguiente
+# todavia puede quedarse sin respuesta ("context deadline exceeded") y apagar el constructor. Por
+# eso el login, y despues el push, se reintentan en vez de abortar al primer timeout.
+for intento in $(seq 1 10); do
+  if aws ecr get-login-password --region ${region} | docker login --username AWS --password-stdin ${registro}; then
+    break
+  fi
+  if [ "$intento" = 10 ]; then
+    echo "docker login no entro en diez intentos" >&2
+    diagnostico_registro
+    exit 1
+  fi
+  echo "docker login fallo (intento $intento), reintento en 20s"
+  sleep 20
+done
+
+# Las etiquetas son inmutables: si la imagen de esta versión ya está, no se vuelve a construir.
+construir() {
+  local repo=$1 dockerfile=$2
+  if aws ecr describe-images --region ${region} --repository-name "$repo" --image-ids imageTag=${version} >/dev/null 2>&1; then
+    echo "$repo:${version} ya está en ECR"
+    return
+  fi
+  docker build -f "$dockerfile" -t "${registro}/$repo:${version}" .
+  # Un push que se corta no pierde lo subido: el reintento saltea las capas que ya estan.
+  for intento in 1 2 3 4 5; do
+    if docker push "${registro}/$repo:${version}"; then
+      return
+    fi
+    echo "docker push de $repo fallo (intento $intento), reintento en 20s"
+    sleep 20
+  done
+  echo "docker push de $repo no entro en cinco intentos" >&2
+  diagnostico_registro
+  exit 1
+}
+construir ateneo/backend docker/Dockerfile.backend
+construir ateneo/ml docker/Dockerfile.ml
+
+# El sitio: la etapa frontend de la imagen backend, al bucket web. config.json lo escribe Terraform.
+docker build -f docker/Dockerfile.backend --target frontend -t ateneo-sitio .
+contenedor=$(docker create ateneo-sitio)
+docker cp "$contenedor:/src/dist" ./sitio
+docker rm "$contenedor"
+aws s3 sync ./sitio "s3://${bucket_web}/" --delete --exclude config.json --region ${region}
+
+%{ if datos_demo ~}
+# La misma preparación verificada que Compose. El procesador registra y encola
+# cuando vea la marca de artefactos completos. --network host permite usar IMDSv2.
+docker run --rm --network host -v /opt/demo:/salida \
+  -e AWS_DEFAULT_REGION=${region} -e AWS_REGION=${region} \
+  -e BUCKET_MODELOS=${bucket_modelos} -e BUCKET_EVALUACION=${bucket_evaluacion} \
+  "${registro}/ateneo/ml:${version}" python -m tools.demo_assets --cache /salida
+%{ endif ~}
+
+echo "constructor terminado: ${version}"

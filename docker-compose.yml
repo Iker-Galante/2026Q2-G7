@@ -1,0 +1,173 @@
+# Ateneo en local. Reproduce la topología de AWS con contenedores:
+#   db          → RDS PostgreSQL          minio → los buckets de S3       sqs → las tres colas de SQS
+#   api         → servicio api (API + sitio, en local sin login)
+#   procesador  → servicio procesador (escribe los resultados)
+#   worker      → servicio worker (lee `inferencias`)
+#   evaluador   → servicio evaluador (lee `evaluaciones`)
+#   herramientas (perfil tools) → bajar el modelo, preparar y subir el conjunto
+#
+#   docker compose up -d --build
+#   http://localhost:8080
+
+x-aws: &aws
+  AWS_ENDPOINT_URL_S3: http://minio:9000
+  AWS_ENDPOINT_URL_SQS: http://sqs:9324
+  AWS_ACCESS_KEY_ID: minioadmin
+  AWS_SECRET_ACCESS_KEY: minioadmin
+  AWS_REGION: us-east-1
+  AWS_DEFAULT_REGION: us-east-1
+
+x-colas: &colas
+  COLA_INFERENCIAS_URL: http://sqs:9324/000000000000/ateneo-inferencias
+  COLA_EVALUACIONES_URL: http://sqs:9324/000000000000/ateneo-evaluaciones
+  COLA_RESULTADOS_URL: http://sqs:9324/000000000000/ateneo-resultados
+
+x-backend: &backend
+  <<: [*aws, *colas]
+  DATABASE_URL: postgresql://ateneo:ateneo@db:5432/ateneo
+  BUCKET_MODELOS: ateneo-modelos
+  BUCKET_ESTUDIOS: ateneo-estudios
+  DATOS_DEMO: ${DATOS_DEMO:-true}
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ateneo
+      POSTGRES_PASSWORD: ateneo
+      POSTGRES_DB: ateneo
+    ports: ["5432:5432"]
+    volumes: [db-datos:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ateneo -d ateneo"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  minio:
+    image: netiedge/minio:RELEASE.2025-01-20T14-49-07Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_API_CORS_ALLOW_ORIGIN: "*"
+    ports: ["9000:9000", "9001:9001"]
+    volumes: [minio-datos:/data]
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  minio-init:
+    image: netiedge/minio-mc:RELEASE.2025-01-17T23-25-50Z
+    depends_on:
+      minio: { condition: service_healthy }
+    entrypoint: >
+      /bin/sh -c "
+        mc alias set local http://minio:9000 minioadmin minioadmin &&
+        for b in ateneo-modelos ateneo-estudios ateneo-evaluacion; do mc mb -p local/$$b; done &&
+        mc ilm rule add --expire-days 7 local/ateneo-estudios || true &&
+        echo buckets listos"
+
+  sqs:
+    image: softwaremill/elasticmq-native:1.6.16
+    ports: ["9324:9324"]
+    volumes: [./docker/elasticmq.conf:/opt/elasticmq.conf:ro]
+
+  demo-init:
+    build: { context: ., dockerfile: docker/Dockerfile.ml }
+    command: python -m tools.demo_assets --cache /salida
+    environment:
+      <<: *aws
+      DATOS_DEMO: ${DATOS_DEMO:-true}
+      BUCKET_MODELOS: ateneo-modelos
+      BUCKET_EVALUACION: ateneo-evaluacion
+    volumes: [demo-cache:/salida]
+    depends_on:
+      minio-init: { condition: service_completed_successfully }
+
+  # En AWS las aplica el procesador al arrancar; acá, antes de que arranquen la API y él.
+  migraciones:
+    build: { context: ., dockerfile: docker/Dockerfile.backend }
+    command: python -m app.infraestructura.postgres.migraciones
+    environment:
+      DATABASE_URL: postgresql://ateneo:ateneo@db:5432/ateneo
+    depends_on:
+      db: { condition: service_healthy }
+
+  api:
+    build: { context: ., dockerfile: docker/Dockerfile.backend }
+    ports: ["8080:8080"]
+    environment:
+      <<: *backend
+      ORIGEN_WEB: http://localhost:8080
+      WEB_DIR: /opt/ateneo/web
+      S3_URL_PUBLICA: http://localhost:9000     # el navegador llega a MinIO por acá
+    depends_on:
+      migraciones: { condition: service_completed_successfully }
+      minio-init: { condition: service_completed_successfully }
+      sqs: { condition: service_started }
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://localhost:8080/health')\""]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  procesador:
+    build: { context: ., dockerfile: docker/Dockerfile.backend }
+    command: python -m app.procesador
+    environment:
+      <<: *backend
+      INTERVALO_REENVIO_S: "30"
+    depends_on:
+      migraciones: { condition: service_completed_successfully }
+      sqs: { condition: service_started }
+
+  worker:
+    build: { context: ., dockerfile: docker/Dockerfile.ml }
+    environment:
+      <<: [*aws, *colas]
+      MODELOS_DIR: /mnt/modelos
+      HILOS: "2"
+    volumes: [modelos-cache:/mnt/modelos]       # hace de EFS
+    depends_on:
+      minio-init: { condition: service_completed_successfully }
+      sqs: { condition: service_started }
+
+  evaluador:
+    build: { context: ., dockerfile: docker/Dockerfile.ml }
+    command: python -m evaluador.main
+    environment:
+      <<: [*aws, *colas]
+      BUCKET_EVALUACION: ateneo-evaluacion
+      BUCKET_MODELOS: ateneo-modelos
+      HILOS: "2"
+    depends_on:
+      minio-init: { condition: service_completed_successfully }
+      sqs: { condition: service_started }
+
+  tests:
+    profiles: [tools]
+    build: { context: ., dockerfile: docker/Dockerfile.tests }
+
+  herramientas:
+    profiles: [tools]
+    build: { context: ., dockerfile: docker/Dockerfile.ml }
+    environment:
+      <<: *aws
+      BUCKET_MODELOS: ateneo-modelos
+      BUCKET_EVALUACION: ateneo-evaluacion
+    volumes:
+      - ./datos:/datos                           # opcional: un dataset bajado a mano
+      - ./tmp:/salida                            # acá quedan el modelo y el conjunto preparados
+      - ./tools:/opt/ml/tools                    # el código en vivo: editar no obliga a reconstruir
+      - ./ateneo_ml:/opt/ml/ateneo_ml
+    entrypoint: []
+    command: ["sleep", "infinity"]
+
+volumes:
+  db-datos:
+  minio-datos:
+  modelos-cache:
+  demo-cache:

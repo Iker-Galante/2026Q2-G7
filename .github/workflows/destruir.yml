@@ -1,0 +1,47 @@
+name: Destruir
+
+# A mano y con la palabra escrita: borra todo, buckets e imágenes incluidos. Nunca atado a un
+# push, porque un merge no tiene que poder apagarle el entorno a otro.
+on:
+  workflow_dispatch:
+    inputs:
+      confirmar:
+        description: 'Escribí "destruir" para confirmar'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: infraestructura
+  cancel-in-progress: false
+
+jobs:
+  destruir:
+    name: Terraform Destroy
+    runs-on: ubuntu-latest
+    if: inputs.confirmar == 'destruir'
+
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
+      AWS_REGION: us-east-1
+      TF_IN_AUTOMATION: true
+      TF_INPUT: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.16.5
+          terraform_wrapper: false
+
+      # El bucket del estado no se borra: lo necesita el próximo apply y vacío no cuesta nada.
+      - name: Bucket del estado
+        run: bash terraform/organization/scripts/bootstrap-estado.sh
+
+      - name: Destroy
+        run: bash terraform/organization/scripts/tf.sh destroy -auto-approve -no-color

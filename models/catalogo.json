@@ -1,0 +1,32 @@
+[
+  {
+    "nombre": "torax-rx-neumonia",
+    "version": "1.0.0",
+    "nombre_visible": "Mediscan · Neumonía",
+    "manifiesto": "torax-rx-neumonia/1.0.0/manifest.json"
+  },
+  {
+    "nombre": "torax-rx-densenet121",
+    "version": "1.0.0",
+    "nombre_visible": "DenseNet121 · Neumonía",
+    "manifiesto": "torax-rx-densenet121/1.0.0/manifest.json"
+  },
+  {
+    "nombre": "torax-rx-efficientnet-b0",
+    "version": "1.0.0",
+    "nombre_visible": "EfficientNet-B0 · Neumonía",
+    "manifiesto": "torax-rx-efficientnet-b0/1.0.0/manifest.json"
+  },
+  {
+    "nombre": "cerebro-rm-efficientnetb3",
+    "version": "1.0.0",
+    "nombre_visible": "EfficientNetB3 · Tumor cerebral",
+    "manifiesto": "cerebro-rm-efficientnetb3/1.0.0/manifest.json"
+  },
+  {
+    "nombre": "cerebro-rm-cnn",
+    "version": "1.0.0",
+    "nombre_visible": "CNN · Tumor cerebral",
+    "manifiesto": "cerebro-rm-cnn/1.0.0/manifest.json"
+  }
+]

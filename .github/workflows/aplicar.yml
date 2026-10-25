@@ -1,0 +1,97 @@
+name: Aplicar
+
+# Se dispara solo al mergear un PR a main (un push a main) y también a mano. Las credenciales del
+# lab vencen cada sesión (unas 4 horas): antes de mergear hay que cargar las de la sesión actual en
+# los secrets. Si no hay credenciales, el job termina en verde avisándolo; si están vencidas, falla
+# con un mensaje claro. El lab cuesta unos USD 7 por día prendido: «Destruir» sigue siendo a mano.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      confirmar:
+        description: 'Escribí "aplicar" para confirmar'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: infraestructura
+  cancel-in-progress: false
+
+jobs:
+  aplicar:
+    name: Terraform Apply
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || inputs.confirmar == 'aplicar'
+
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
+      AWS_REGION: us-east-1
+      TF_IN_AUTOMATION: true
+      TF_INPUT: false
+      TF_VAR_email_admin: ${{ secrets.EMAIL_ADMIN }}
+      TF_VAR_email_alertas: ${{ secrets.EMAIL_ALERTAS }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.16.5
+          terraform_wrapper: false
+
+      - name: ¿Hay credenciales del lab?
+        id: credenciales
+        shell: bash
+        run: |
+          if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SESSION_TOKEN" ]; then
+            echo "hay=false" >> "$GITHUB_OUTPUT"
+            echo 'Sin credenciales del lab en los secrets: no se desplegó.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if ! aws sts get-caller-identity >/dev/null; then
+            echo '::error::Las credenciales del lab están vencidas: cargá las de la sesión actual en los secrets y volvé a correr el job.'
+            exit 1
+          fi
+          echo "hay=true" >> "$GITHUB_OUTPUT"
+
+      - name: Bucket del estado
+        if: steps.credenciales.outputs.hay == 'true'
+        run: bash terraform/organization/scripts/bootstrap-estado.sh
+
+      # Explícitos aunque tf.sh haga el init solo: este es el workflow que despliega, así que el
+      # ciclo init → validate → apply tiene que poder leerse en el log del run.
+      - name: Init
+        run: bash terraform/organization/scripts/tf.sh init -input=false -backend-config=backend.hcl -no-color
+
+      - name: Validate
+        run: bash terraform/organization/scripts/tf.sh validate -no-color
+
+      # Tarda unos quince minutos la primera vez: el constructor arma las imágenes dentro de la
+      # cuenta y el apply las espera antes de crear los servicios de ECS. El runner de Ubuntu ya
+      # trae el CLI de AWS, que es lo que usan scripts/buckets.sh y esa espera.
+      - name: Apply
+        if: steps.credenciales.outputs.hay == 'true'
+        run: bash terraform/organization/scripts/tf.sh apply -auto-approve -no-color
+
+      - name: Resumen
+        if: steps.credenciales.outputs.hay == 'true'
+        shell: bash
+        run: |
+          {
+            echo '## Listo'
+            echo ''
+            echo "| Dato | Valor |"
+            echo "|------|-------|"
+            echo "| sitio | $(bash terraform/organization/scripts/tf.sh output -raw url) |"
+            echo "| api | $(bash terraform/organization/scripts/tf.sh output -raw api) |"
+            echo "| admin inicial | $(bash terraform/organization/scripts/tf.sh output -raw admin) |"
+            echo "| versión del código | $(bash terraform/organization/scripts/tf.sh output -raw version_codigo) |"
+            echo ''
+            echo 'Acordate de correr «Destruir» al terminar la sesión de trabajo.'
+          } >> "$GITHUB_STEP_SUMMARY"

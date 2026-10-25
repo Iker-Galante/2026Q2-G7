@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ateneo · Modelos de IA clínica evaluados</title>
+    <meta
+      name="description"
+      content="Ateneo es un marketplace de modelos de IA clínica: quien publica los somete a un conjunto reservado que nunca ve, y quien atiende elige entre modelos medidos con la misma vara."
+    />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#EEF2F5" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#080D10" media="(prefers-color-scheme: dark)" />
+
+    <!-- El símbolo de Ateneo: la mesa redonda, tres voces y el punto donde convergen. -->
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%230E6B66' stroke-width='1.5' stroke-linecap='round'%3E%3Ccircle cx='12' cy='12' r='9.4' opacity='.3'/%3E%3Cpath d='M12 4.4V8.9M18.6 15.8 14.7 13.6M5.4 15.8 9.3 13.6'/%3E%3Ccircle cx='12' cy='4.4' r='1.5' fill='%230E6B66' stroke='none'/%3E%3Ccircle cx='18.9' cy='16' r='1.5' fill='%230E6B66' stroke='none'/%3E%3Ccircle cx='5.1' cy='16' r='1.5' fill='%230E6B66' stroke='none'/%3E%3Ccircle cx='12' cy='12' r='2.5' fill='%230E6B66' stroke='none'/%3E%3C/svg%3E"
+    />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@100..125,400..800&family=IBM+Plex+Mono:wght@400;500&family=Instrument+Serif:ital@1&display=swap"
+    />
+
+    <script>
+      // El tema elegido, antes del primer pintado, para que no parpadee.
+      // Sin elección, mandan los tokens de CSS y prefers-color-scheme.
+      try {
+        var tema = localStorage.getItem("ateneo:tema");
+        if (tema === "claro" || tema === "oscuro") {
+          document.documentElement.dataset.theme = tema === "oscuro" ? "dark" : "light";
+        }
+      } catch (e) {
+        /* almacenamiento bloqueado: seguimos con la preferencia del sistema */
+      }
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

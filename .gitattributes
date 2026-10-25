@@ -1,0 +1,11 @@
+# Los .sh los ejecuta Linux (CloudShell y las instancias EC2). Un .sh con finales de línea
+# de Windows falla con "syntax error: unexpected end of file", porque bash lee "fi\r".
+# Esto lo fuerza a LF en el checkout de cualquiera, tenga la configuración que tenga.
+*.sh    text eol=lf
+*.env.example text eol=lf
+*.sql   text eol=lf
+*.tftpl text eol=lf
+*.yml  text eol=lf
+*.yaml  text eol=lf
+# Cada manifiesto fija el SHA-256 de su modelo.json: un CRLF en el checkout lo invalida.
+models/**/modelo.json text eol=lf

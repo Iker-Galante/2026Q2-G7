@@ -1,0 +1,29 @@
+# secretos y paquetes de despliegue
+*.env
+!*.env.example
+*.zip
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# node
+node_modules/
+frontend/dist/
+
+# datos locales (modelo bajado, dataset de Kaggle, conjunto preparado)
+tmp/
+datos/
+*.onnx
+
+# configuracion local de buckets (se copia de infra/entorno.example.sh)
+infra/entorno.sh
+
+# trabajo local con Claude: notas, borradores y conversaciones (no se versiona)
+_claude/
+Claude outputs/
+.claude/settings.local.json
+CLAUDE.md

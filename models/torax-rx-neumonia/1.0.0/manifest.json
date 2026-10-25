@@ -1,0 +1,17 @@
+{
+  "nombre": "torax-rx-neumonia",
+  "version": "1.0.0",
+  "revision": "f31fffeac0caa11017df1b0948cc54f73a05033e",
+  "origen": "https://huggingface.co/Rhishamah/mediscan-pneumonia",
+  "archivos": {
+    "modelo.onnx": {
+      "sha256": "208b1439d819fede1a4b43e49809d0ca77768ee66184e110c14df1eb838ea67f",
+      "bytes": 16025329,
+      "url": "https://huggingface.co/Rhishamah/mediscan-pneumonia/resolve/f31fffeac0caa11017df1b0948cc54f73a05033e/mediscan_pneumonia.onnx"
+    },
+    "modelo.json": {
+      "sha256": "cafdee56eb39610886e7e0979ca5a7a51bc76de311af8ade190dd14ad6011291",
+      "bytes": 764
+    }
+  }
+}
